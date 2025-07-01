@@ -136,7 +136,7 @@ logger.info("🚀 Quiz bot starting up - loading configuration")
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID", "5290407067"))
+OWNER_ID = 5290407067  # Hardcoded owner ID
 
 logger.info(f"🔑 Bot token loaded: {'✅ Success' if TOKEN else '❌ Missing'}")
 logger.info(f"👑 Owner ID configured: {OWNER_ID}")
@@ -185,7 +185,9 @@ logger.info(f"📋 Loaded {len(CATEGORIES)} quiz categories successfully")
 session: aiohttp.ClientSession = None
 semaphore = asyncio.Semaphore(5)
 user_ids: Set[int] = set()
+group_ids: Set[int] = set()
 broadcast_mode: Set[int] = set()
+broadcast_target: dict = {}  # Store broadcast target choice for each owner
 
 # User throttling to prevent spam and rate limit issues
 user_last_request = {}
@@ -277,6 +279,11 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str):
     user_last_request[user_id] = current_time
     
     logger.info(f"🎯 Sending quiz to user {info['full_name']} for category {cat_id}")
+    
+    # Track groups when quiz is sent
+    if info['chat_type'] in ['group', 'supergroup']:
+        group_ids.add(msg.chat.id)
+        logger.info(f"📢 Group added to database. Total groups: {len(group_ids)}")
     
     try:
         logger.debug("⌨️ Showing typing indicator to user")
@@ -500,6 +507,11 @@ async def cmd_start(msg: Message):
 
     user_ids.add(msg.from_user.id)
     logger.info(f"👥 User added to database. Total users: {len(user_ids)}")
+    
+    # Track groups when bot is added
+    if info['chat_type'] in ['group', 'supergroup']:
+        group_ids.add(msg.chat.id)
+        logger.info(f"📢 Group added to database. Total groups: {len(group_ids)}")
 
     logger.debug("⌨️ Showing typing indicator")
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
@@ -555,50 +567,19 @@ async def cmd_help(msg: Message):
 
     user_ids.add(msg.from_user.id)
     logger.info(f"👥 User added to database. Total users: {len(user_ids)}")
+    
+    # Track groups when help is used
+    if info['chat_type'] in ['group', 'supergroup']:
+        group_ids.add(msg.chat.id)
+        logger.info(f"📢 Group added to database. Total groups: {len(group_ids)}")
 
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
 
-    logger.info("📋 Building help message with all available categories")
 
-    # Group categories
-    knowledge_cats = [(cmd, emoji, desc) for cmd, (_, emoji, desc) in CATEGORIES.items() if cmd in ['general', 'books', 'history', 'geography', 'politics', 'mythology']]
-    entertainment_cats = [(cmd, emoji, desc) for cmd, (_, emoji, desc) in CATEGORIES.items() if cmd in ['film', 'music', 'tv', 'musicals', 'celebs', 'anime', 'cartoons', 'comics']]
-    games_cats = [(cmd, emoji, desc) for cmd, (_, emoji, desc) in CATEGORIES.items() if cmd in ['games', 'board']]
-    science_cats = [(cmd, emoji, desc) for cmd, (_, emoji, desc) in CATEGORIES.items() if cmd in ['nature', 'computers', 'math', 'gadgets']]
-    lifestyle_cats = [(cmd, emoji, desc) for cmd, (_, emoji, desc) in CATEGORIES.items() if cmd in ['sports', 'art', 'animals', 'vehicles']]
 
-    user_mention = f"<a href='tg://user?id={msg.from_user.id}'>{info['full_name']}</a>"
-
-    def format_section(title: str, cats: list) -> str:
-        lines = [f"├─ /{cmd} ─ {emoji} {desc}" for cmd, emoji, desc in cats[:-1]]
-        if cats:
-            lines.append(f"└─ /{cats[-1][0]} ─ {cats[-1][1]} {cats[-1][2]}")
-        return f"📂 <b>{title}</b>\n" + "\n".join(lines)
-
-    text = (
-        f"📚 <b>Quiz Categories for {user_mention}</b>\n\n"
-        + format_section("Knowledge & Education", knowledge_cats) + "\n\n"
-        + format_section("Entertainment & Media", entertainment_cats) + "\n\n"
-        + format_section("Games & Gaming", games_cats) + "\n\n"
-        + format_section("Science & Technology", science_cats) + "\n\n"
-        + format_section("Lifestyle & Hobbies", lifestyle_cats) + "\n\n"
-        "🎲 <b>Special Commands</b>\n"
-        "├─ /random ─ 🎯 Random quiz\n"
-        "├─ /start ─ 🚀 Welcome message\n"
-        "└─ /help ─ 📋 This help menu\n\n"
-        f"💡 <b>Pro Tip:</b> Use any command to begin your quiz adventure!\n"
-        "🏆 Challenge yourself and rise to the top!"
-    )
-
-    logger.info("📤 Sending help message to user")
-    if info['chat_type'] in ['group', 'supergroup']:
-        logger.info(f"📢 Sending help message as reply in group {info['chat_title']}")
-        response = await msg.reply(text)
-    else:
-        logger.info(f"💬 Sending help message in private chat with {info['full_name']}")
-        response = await msg.answer(text)
-
-    logger.info(f"✅ Help message sent successfully, ID: {response.message_id}")
+    logger.info("📤 Sending basic help message with expand option")
+    await show_basic_help(msg)
+    logger.info("✅ Help message sent successfully")
     
 @dp.message(Command("random"))
 async def cmd_random(msg: Message):
@@ -608,6 +589,11 @@ async def cmd_random(msg: Message):
     
     user_ids.add(msg.from_user.id)
     logger.info(f"👥 User added to database. Total users: {len(user_ids)}")
+    
+    # Track groups when random quiz is used
+    if info['chat_type'] in ['group', 'supergroup']:
+        group_ids.add(msg.chat.id)
+        logger.info(f"📢 Group added to database. Total groups: {len(group_ids)}")
     
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
     
@@ -631,18 +617,320 @@ async def cmd_broadcast(msg: Message):
         return
     
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
-    logger.info(f"👑 Enabling broadcast mode for owner {msg.from_user.id}")
-    broadcast_mode.add(msg.from_user.id)
     
-    response = await msg.answer("📣 <b>Broadcast mode enabled.</b> Send me any message and I will forward it to all users.")
-    logger.info(f"✅ Broadcast mode enabled, message ID: {response.message_id}")
+    # Create inline keyboard for broadcast target selection
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"👥 Users ({len(user_ids)})", callback_data="broadcast_users"),
+            InlineKeyboardButton(text=f"📢 Groups ({len(group_ids)})", callback_data="broadcast_groups")
+        ]
+    ])
+    
+    response = await msg.answer(
+        "📣 <b>Choose broadcast target:</b>\n\n"
+        f"👥 <b>Users:</b> {len(user_ids)} individual users\n"
+        f"📢 <b>Groups:</b> {len(group_ids)} groups\n\n"
+        "Select where you want to send your broadcast message:",
+        reply_markup=keyboard
+    )
+    logger.info(f"✅ Broadcast target selection sent, message ID: {response.message_id}")
+
+# Store help page states for users
+help_page_states = {}
+
+@dp.callback_query()
+async def handle_help_pagination(callback: types.CallbackQuery):
+    """Handle help pagination and broadcast target selection callbacks"""
+    if callback.data.startswith('broadcast_'):
+        # Handle broadcast target selection
+        if callback.from_user.id != OWNER_ID:
+            await callback.answer("⛔ This command is restricted.", show_alert=True)
+            return
+        
+        target = callback.data.split('_')[1]  # 'users' or 'groups'
+        broadcast_target[callback.from_user.id] = target
+        broadcast_mode.add(callback.from_user.id)
+        
+        logger.info(f"👑 Enabling broadcast mode for owner {callback.from_user.id} - Target: {target}")
+        
+        target_text = "individual users" if target == "users" else "groups"
+        target_count = len(user_ids) if target == "users" else len(group_ids)
+        
+        await callback.message.edit_text(
+            f"📣 <b>Broadcast mode enabled!</b>\n\n"
+            f"🎯 <b>Target:</b> {target_text} ({target_count})\n\n"
+            "Send me any message and I will forward it to all selected targets."
+        )
+        
+        logger.info(f"✅ Broadcast mode enabled for {target}, message ID: {callback.message.message_id}")
+        await callback.answer()
+        return
+    
+    if not callback.data.startswith('help_'):
+        await callback.answer()
+        return
+    
+    user_id = callback.from_user.id
+    action = callback.data.split('_')[1]
+    
+    if action == 'expand':
+        help_page_states[user_id] = {'expanded': True, 'page': 1}
+        await show_help_page(callback, user_id, 1, edit=True)
+    elif action == 'minimize':
+        help_page_states.pop(user_id, None)
+        await show_basic_help(callback, edit=True)
+    elif action == 'prev':
+        current_page = help_page_states.get(user_id, {}).get('page', 1)
+        new_page = max(1, current_page - 1)
+        help_page_states[user_id] = help_page_states.get(user_id, {})
+        help_page_states[user_id]['page'] = new_page
+        await show_help_page(callback, user_id, new_page, edit=True)
+    elif action == 'next':
+        current_page = help_page_states.get(user_id, {}).get('page', 1)
+        new_page = min(10, current_page + 1)
+        help_page_states[user_id] = help_page_states.get(user_id, {})
+        help_page_states[user_id]['page'] = new_page
+        await show_help_page(callback, user_id, new_page, edit=True)
+    elif action == 'page' and len(callback.data.split('_')) > 2 and callback.data.split('_')[2] == '1':
+        help_page_states[user_id] = help_page_states.get(user_id, {})
+        help_page_states[user_id]['page'] = 1
+        await show_help_page(callback, user_id, 1, edit=True)
+    
+    await callback.answer()
+
+async def show_basic_help(callback_or_msg, edit=False):
+    """Show basic help with expand button"""
+    user_id = callback_or_msg.from_user.id
+    full_name = callback_or_msg.from_user.full_name
+    user_mention = f"<a href='tg://user?id={user_id}'>{full_name}</a>"
+    
+    text = f"""🎯 <b>iQ Lost Quiz Bot</b>
+
+Hello {user_mention}! 👋
+
+I'm your intelligent quiz companion with 24+ categories to challenge your knowledge!
+
+🎮 <b>Quick Start:</b>
+• /general - General Knowledge 🧠
+• /music - Music Trivia 🎵
+• /sports - Sports Quiz 🏅
+• /random - Surprise me! 🎲
+
+📋 <b>More Commands:</b>
+• /start - Welcome message
+• /help - This help menu
+
+Ready to test your knowledge? 🚀"""
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📖 Expand Guide", callback_data="help_expand")]
+    ])
+    
+    if edit and hasattr(callback_or_msg, 'message'):
+        await callback_or_msg.message.edit_text(text, reply_markup=keyboard)
+    elif hasattr(callback_or_msg, 'reply'):
+        await callback_or_msg.reply(text, reply_markup=keyboard)
+    else:
+        await callback_or_msg.answer(text, reply_markup=keyboard)
+
+async def show_help_page(callback_or_msg, user_id, page, edit=False):
+    """Show detailed help page with pagination"""
+    full_name = callback_or_msg.from_user.full_name
+    user_mention = f"<a href='tg://user?id={user_id}'>{full_name}</a>"
+    
+    pages = {
+        1: f"""🎯 <b>iQ Lost Guide (1/10)</b>
+
+Hey {user_mention}, welcome to your quiz journey! 🌟  
+I’m iQ Lost! Your fun quiz buddy with 24+ categories from science to sports!
+
+🎮 <b>How to Play:</b>  
+1. Pick a category  
+2. Answer polls & get instant facts  
+3. Learn, explore & have fun!
+
+🏆 <b>Features:</b>  
+• 24+ topics  
+• Interactive polls  
+• Instant explanations  
+• Fair play system
+
+Let’s make learning fun! 🚀""",
+        
+        2: f"""📚 <b>Knowledge Categories (2/10)</b>
+
+Hey {user_mention}, explore these brain-boosting categories:
+
+🧠 <b>General Knowledge:</b>
+/general - Test your overall knowledge
+
+📚 <b>Literature & History:</b>
+/books - Book trivia and literature
+/history - Historical events and figures
+/mythology - Gods, legends, and myths
+
+🌍 <b>Geography & Politics:</b>
+/geography - World geography
+/politics - Political knowledge""",
+        
+        3: f"""🎬 <b>Entertainment & Media (3/10)</b>
+
+Ready for some fun, {user_mention}? 🎭
+
+🎬 <b>Movies & TV:</b>
+/film - Movie trivia and cinema
+/tv - Television shows and series
+/musicals - Musical theater knowledge
+
+🎵 <b>Music & Performance:</b>
+/music - Music trivia across genres
+
+⭐ <b>Celebrity Culture:</b>
+/celebs - Celebrity knowledge
+/anime - Anime and manga
+/cartoons - Animated series""",
+        
+        4: f"""🎮 <b>Gaming & Comics (4/10)</b>
+
+Level up your knowledge, {user_mention}! 🕹️
+
+🎮 <b>Video Games:</b>
+/games - Video game trivia
+/board - Board game knowledge
+
+💥 <b>Comics & Graphics:</b>
+/comics - Comic book universe
+
+🎨 <b>Creative Arts:</b>
+/art - Art, design, and creativity""",
+        
+        5: f"""🔬 <b>Science & Technology (5/10)</b>
+
+Discover the world of science, {user_mention}! 🧪
+
+🌿 <b>Natural Sciences:</b>
+/nature - Science and nature facts
+/animals - Animal kingdom knowledge
+
+💻 <b>Technology:</b>
+/computers - Tech and computer science
+/gadgets - Science gadgets and inventions
+
+➗ <b>Mathematics:</b>
+/math - Mathematical concepts""",
+        
+        6: f"""🏃‍♂️ <b>Sports & Lifestyle (6/10)</b>
+
+Stay active with these topics, {user_mention}! 🏆
+
+🏅 <b>Sports:</b>
+/sports - Sports trivia and facts
+
+🚗 <b>Transportation:</b>
+/vehicles - Cars, planes, and transport
+
+🎯 <b>Special Commands:</b>
+/random - Get a surprise quiz from any category!""",
+        
+        7: f"""💡 <b>Pro Tips & Strategies (7/10)</b>
+
+Master the quiz game, {user_mention}! 🎯
+
+🧠 <b>Quiz Strategies:</b>
+• Read questions carefully
+• Think before answering
+• Learn from explanations
+• Try different categories
+
+⚡ <b>Rate Limiting:</b>
+• 2-second cooldown between requests
+• Prevents spam and ensures fair play
+• Quality over quantity!""",
+        
+        8: f"""🎮 <b>Bot Features & Commands (8/10)</b>
+
+Unlock all features, {user_mention}! 🔓
+
+🤖 <b>Smart Features:</b>
+• Interactive poll questions
+• Instant explanations
+• Group and private chat support
+
+📋 <b>Main Commands:</b>
+/start - Welcome and introduction
+/help - This comprehensive guide
+/random - Random category quiz""",
+        
+        9: f"""🏆 <b>Challenge Yourself (9/10)</b>
+
+Push your limits, {user_mention}! 💪
+
+🎯 <b>Challenge Ideas:</b>
+• Try all 24 categories
+• Focus on your weak areas
+• Challenge friends in groups
+• Set daily quiz goals
+
+🌟 <b>Did You Know?</b>
+iQ Lost has carefully curated high-quality, verified questions across all categories to give you the best quiz experience!""",
+        
+        10: f"""🚀 <b>Ready to Begin? (10/10)</b>
+
+You're all set, {user_mention}! 🎓
+
+🎯 <b>Quick Start Commands:</b>
+/general 🧠 | /music 🎵 | /sports 🏅
+/history 📜 | /games 🎮 | /nature 🌿
+
+🎲 <b>Feeling Lucky?</b>
+Use /random for a surprise quiz!
+
+🏆 <b>Remember:</b>
+Every expert was once a beginner. Start your iQ Lost journey today and watch your knowledge grow!
+
+Good luck, quiz master! 🌟"""
+    }
+    
+    text = pages.get(page, pages[1])
+    
+    # Build navigation buttons
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Previous", callback_data="help_prev"))
+    if page < 10:
+        nav_buttons.append(InlineKeyboardButton(text="Next ▶️", callback_data="help_next"))
+    
+    keyboard_rows = []
+    
+    # Special handling for page 10 - 2 rows only
+    if page == 10:
+        # First row: Previous and Back to Start
+        first_row = [InlineKeyboardButton(text="◀️ Previous", callback_data="help_prev")]
+        first_row.append(InlineKeyboardButton(text="🏠 Home", callback_data="help_page_1"))
+        keyboard_rows.append(first_row)
+        # Second row: Minimize
+        keyboard_rows.append([InlineKeyboardButton(text="📖 Minimize", callback_data="help_minimize")])
+    else:
+        # Normal navigation for other pages
+        if nav_buttons:
+            keyboard_rows.append(nav_buttons)
+        keyboard_rows.append([InlineKeyboardButton(text="📖 Minimize", callback_data="help_minimize")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+    
+    if edit and hasattr(callback_or_msg, 'message'):
+        await callback_or_msg.message.edit_text(text, reply_markup=keyboard)
+    elif hasattr(callback_or_msg, 'reply'):
+        await callback_or_msg.reply(text, reply_markup=keyboard)
+    else:
+        await callback_or_msg.answer(text, reply_markup=keyboard)
 
 @dp.message()
 async def catch_all(msg: Message):
-    """Handle all other messages and broadcast functionality"""
+    """Handle broadcast functionality only - ignore other messages in groups"""
     info = extract_user_info(msg)
-    logger.debug(f"💬 Message received from {info['full_name']}")
     
+    # Only handle broadcast mode, ignore all other messages in groups
     if msg.from_user.id in broadcast_mode:
         logger.info(f"📡 Broadcasting message from owner {info['full_name']}")
         
@@ -651,33 +939,132 @@ async def catch_all(msg: Message):
         success_count = 0
         fail_count = 0
         
-        logger.info(f"📊 Starting broadcast to {len(user_ids)} users")
+        # Get broadcast target for this owner
+        target = broadcast_target.get(msg.from_user.id, "users")
+        target_ids = user_ids if target == "users" else group_ids
+        target_name = "users" if target == "users" else "groups"
         
-        for user_id in user_ids.copy():
+        logger.info(f"📊 Starting broadcast to {len(target_ids)} {target_name}")
+        
+        for target_id in target_ids.copy():
             try:
-                await bot.send_message(user_id, msg.text or msg.caption or "📢 Broadcast message")
+                # Handle different message types
+                if msg.photo:
+                    # Photo message
+                    await bot.send_photo(
+                        target_id, 
+                        msg.photo[-1].file_id, 
+                        caption=msg.caption,
+                        parse_mode=ParseMode.HTML if msg.caption_entities else None
+                    )
+                elif msg.video:
+                    # Video message
+                    await bot.send_video(
+                        target_id, 
+                        msg.video.file_id, 
+                        caption=msg.caption,
+                        parse_mode=ParseMode.HTML if msg.caption_entities else None
+                    )
+                elif msg.video_note:
+                    # Video note message
+                    await bot.send_video_note(target_id, msg.video_note.file_id)
+                elif msg.voice:
+                    # Voice message
+                    await bot.send_voice(
+                        target_id, 
+                        msg.voice.file_id,
+                        caption=msg.caption,
+                        parse_mode=ParseMode.HTML if msg.caption_entities else None
+                    )
+                elif msg.audio:
+                    # Audio message
+                    await bot.send_audio(
+                        target_id, 
+                        msg.audio.file_id,
+                        caption=msg.caption,
+                        parse_mode=ParseMode.HTML if msg.caption_entities else None
+                    )
+                elif msg.document:
+                    # Document message
+                    await bot.send_document(
+                        target_id, 
+                        msg.document.file_id,
+                        caption=msg.caption,
+                        parse_mode=ParseMode.HTML if msg.caption_entities else None
+                    )
+                elif msg.sticker:
+                    # Sticker message
+                    await bot.send_sticker(target_id, msg.sticker.file_id)
+                elif msg.animation:
+                    # GIF/Animation message
+                    await bot.send_animation(
+                        target_id, 
+                        msg.animation.file_id,
+                        caption=msg.caption,
+                        parse_mode=ParseMode.HTML if msg.caption_entities else None
+                    )
+                elif msg.location:
+                    # Location message
+                    await bot.send_location(
+                        target_id, 
+                        msg.location.latitude, 
+                        msg.location.longitude
+                    )
+                elif msg.contact:
+                    # Contact message
+                    await bot.send_contact(
+                        target_id,
+                        msg.contact.phone_number,
+                        msg.contact.first_name,
+                        last_name=msg.contact.last_name
+                    )
+                elif msg.poll:
+                    # Poll message
+                    await bot.send_poll(
+                        target_id,
+                        msg.poll.question,
+                        [option.text for option in msg.poll.options],
+                        is_anonymous=msg.poll.is_anonymous,
+                        type=msg.poll.type,
+                        allows_multiple_answers=msg.poll.allows_multiple_answers
+                    )
+                elif msg.text:
+                    # Text message
+                    await bot.send_message(
+                        target_id, 
+                        msg.text,
+                        parse_mode=ParseMode.HTML if msg.entities else None
+                    )
+                else:
+                    # Fallback for unknown message types
+                    await bot.send_message(target_id, "📢 Broadcast message (unsupported media type)")
+                
                 success_count += 1
-                logger.debug(f"✅ Broadcast sent successfully to user {user_id}")
+                logger.debug(f"✅ Broadcast sent successfully to {target_name[:-1]} {target_id}")
             except Exception as e:
                 fail_count += 1
-                logger.warning(f"❌ Failed to send broadcast to user {user_id}: {str(e)}")
-                user_ids.discard(user_id)
+                logger.warning(f"❌ Failed to send broadcast to {target_name[:-1]} {target_id}: {str(e)}")
+                target_ids.discard(target_id)
+        
+        # Exit broadcast mode after sending one message
+        broadcast_mode.remove(msg.from_user.id)
+        broadcast_target.pop(msg.from_user.id, None)  # Clean up target selection
+        logger.info(f"🔒 Broadcast mode disabled for owner {info['full_name']}")
         
         logger.info(f"📈 Broadcast complete. Success: {success_count}, Failed: {fail_count}")
         
-        response = await msg.answer(f"📊 Broadcast complete!\n✅ Sent: {success_count}\n❌ Failed: {fail_count}")
+        response = await msg.answer(f"📊 <b>Broadcast complete!</b>\n\n🎯 <b>Target:</b> {target_name.capitalize()}\n✅ <b>Sent:</b> {success_count}\n❌ <b>Failed:</b> {fail_count}\n\n🔒 Broadcast mode disabled.")
         logger.info(f"📋 Broadcast summary sent, ID: {response.message_id}")
     else:
-        logger.debug(f"❓ Unknown command from user {info['full_name']}")
-        await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
-        
-        if info['chat_type'] in ['group', 'supergroup']:
-            logger.info(f"📢 Sending unknown command response as reply in group {info['chat_title']}")
-            response = await msg.reply("🤔 I don't understand that command. Type /help to see available commands.")
-        else:
-            logger.info(f"💬 Sending unknown command response in private chat with {info['full_name']}")
+        # Only respond to unknown commands in private chats, not groups
+        if info['chat_type'] not in ['group', 'supergroup']:
+            logger.debug(f"❓ Unknown command from user {info['full_name']} in private chat")
+            await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
             response = await msg.answer("🤔 I don't understand that command. Type /help to see available commands.")
-        logger.info(f"💭 Unknown command response sent, ID: {response.message_id}")
+            logger.info(f"💭 Unknown command response sent, ID: {response.message_id}")
+        else:
+            # Silently ignore non-command messages in groups
+            logger.debug(f"🔇 Ignoring non-command message in group {info['chat_title']}")
 
 async def global_error_handler(update: Update, exception):
     """Handle global errors gracefully"""
