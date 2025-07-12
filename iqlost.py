@@ -520,7 +520,7 @@ async def cmd_start(msg: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="Updates", url="https://t.me/WorkGlows"),
-            InlineKeyboardButton(text="Support", url="https://t.me/TheCryptoElders")
+            InlineKeyboardButton(text="Support", url="https://t.me/SoulMeetsHQ")
         ],
         [
             InlineKeyboardButton(
