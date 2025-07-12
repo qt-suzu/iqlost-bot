@@ -534,20 +534,22 @@ async def cmd_start(msg: Message):
     user_mention = f"<a href='tg://user?id={msg.from_user.id}'>{info['full_name']}</a>"
 
     text = (
-        f"🎉 <b>Welcome, {user_mention}!</b>\n\n"
-        "🧠 <b>iQ Lost</b> brings you fun, fast, and smart quizzes across 24+ categories!\n\n"
-        "🎯 <b>Key Features</b>\n"
-        "├─ Lightning-fast quiz delivery\n"
-        "├─ 24+ rich categories to explore\n"
-        "└─ Track your progress and compete\n\n"
-        "📋 <b>Quick Commands</b>\n"
-        "├─ /random ─ Surprise quiz 🎲\n"
-        "├─ /help ─ View all categories 📚\n"
-        "├─ /music ─ Music trivia 🎵\n"
-        "├─ /sports ─ Sports knowledge 🏅\n"
-        "└─ /general ─ General knowledge 🧠\n\n"
-        "🚀 <b>Let’s begin your quiz journey now!</b>"
-    )
+    f"🎉 <b>Welcome, {user_mention}!</b>\n\n"
+    "🧠 <b>iQ Lost</b> brings you fun, fast, and smart quizzes across 24+ categories!\n\n"
+    "<blockquote>"
+    "🎯 <b>Key Features</b>\n"
+    "├─ Lightning-fast quiz delivery\n"
+    "├─ 24+ rich categories to explore\n"
+    "└─ Track your progress and compete\n\n"
+    "📋 <b>Quick Commands</b>\n"
+    "├─ /random ─ Surprise quiz 🎲\n"
+    "├─ /help ─ View all categories 📚\n"
+    "├─ /music ─ Music trivia 🎵\n"
+    "├─ /sports ─ Sports knowledge 🏅\n"
+    "└─ /general ─ General knowledge 🧠"
+    "</blockquote>\n\n"
+    "🚀 <b>Let’s begin your quiz journey now!</b>"
+	)
 
     logger.info("📤 Sending welcome message with inline buttons")
     if info['chat_type'] in ['group', 'supergroup']:
