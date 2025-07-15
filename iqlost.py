@@ -557,7 +557,7 @@ async def cmd_start(msg: Message):
 
     text = (
     f"🎉 <b>Hey there, {user_mention}! Welcome!</b>\n\n"
-    "🧠 <b>iQ Lost</b> brings you fun, fast, and smart quizzes across 24+ categories!\n\n"
+    "🧠 <b>iQ Lost</b> brings you fun, fast, and smart quizzes across 24+ categories!\n"
     "<blockquote>"
     "🎯 <b>Key Features</b>\n"
     "├─ Lightning-fast quiz delivery\n"
