@@ -499,16 +499,38 @@ def register_category_handlers():
     """All category handlers registered using decorators"""
     logger.info("✅ All 24 category command handlers registered successfully")
 
+IMAGE_URLS = [
+    "https://i.postimg.cc/x841BwFW/New-Project-235-FFA9646.png",
+    "https://i.postimg.cc/5NC7HwSV/New-Project-235-A06-DD7-A.png",
+    "https://i.postimg.cc/HnPqpdm9/New-Project-235-9-E45-B87.png",
+    "https://i.postimg.cc/1tSPTmRg/New-Project-235-AB394-C0.png",
+    "https://i.postimg.cc/8ct1M2S7/New-Project-235-9-CAE309.png",
+    "https://i.postimg.cc/TYtwDDdt/New-Project-235-2-F658-B0.png",
+    "https://i.postimg.cc/xdwqdVfY/New-Project-235-68-BAF06.png",
+    "https://i.postimg.cc/hPczxn9t/New-Project-235-9-E9-A004.png",
+    "https://i.postimg.cc/jjFPQ1Rk/New-Project-235-A1-E7-CC1.png",
+    "https://i.postimg.cc/TPqJV0pz/New-Project-235-CA65155.png",
+    "https://i.postimg.cc/wBh0WHbb/New-Project-235-89799-CD.png",
+    "https://i.postimg.cc/FKdQ1fzk/New-Project-235-C377613.png",
+    "https://i.postimg.cc/rpKqWnnm/New-Project-235-CFD2548.png",
+    "https://i.postimg.cc/g0kn7HMF/New-Project-235-C4-A32-AC.png",
+    "https://i.postimg.cc/XY6jRkY1/New-Project-235-28-DCBC9.png",
+    "https://i.postimg.cc/SN32J9Nc/New-Project-235-99-D1478.png",
+    "https://i.postimg.cc/8C86n62T/New-Project-235-F1556-B9.png",
+    "https://i.postimg.cc/RCGwVqHT/New-Project-235-5-BBB339.png",
+    "https://i.postimg.cc/pTfYBZyN/New-Project-235-17-D796-A.png",
+    "https://i.postimg.cc/zGgdgJJc/New-Project-235-165-FE5-A.png"
+]
+
 @dp.message(Command("start"))
 async def cmd_start(msg: Message):
     """Handle start command with welcome message and inline buttons"""
     info = extract_user_info(msg)
-    logger.info(f"🚀 Start command received from {info['full_name']}")
+    logger.info(f"🚀 Start command received from {info['full_name']} (ID: {msg.from_user.id})")
 
     user_ids.add(msg.from_user.id)
     logger.info(f"👥 User added to database. Total users: {len(user_ids)}")
-    
-    # Track groups when bot is added
+
     if info['chat_type'] in ['group', 'supergroup']:
         group_ids.add(msg.chat.id)
         logger.info(f"📢 Group added to database. Total groups: {len(group_ids)}")
@@ -529,37 +551,51 @@ async def cmd_start(msg: Message):
             )
         ]
     ])
+    logger.debug("🎛️ Inline keyboard created successfully")
 
-    # Create user mention with href
     user_mention = f"<a href='tg://user?id={msg.from_user.id}'>{info['full_name']}</a>"
 
     text = (
-    f"🎉 <b>Welcome, {user_mention}!</b>\n\n"
-    "🧠 <b>iQ Lost</b> brings you fun, fast, and smart quizzes across 24+ categories!\n\n"
-    "<blockquote>"
-    "🎯 <b>Key Features</b>\n"
-    "├─ Lightning-fast quiz delivery\n"
-    "├─ 24+ rich categories to explore\n"
-    "└─ Track your progress and compete\n\n"
-    "📋 <b>Quick Commands</b>\n"
-    "├─ /random ─ Surprise quiz 🎲\n"
-    "├─ /help ─ View all categories 📚\n"
-    "├─ /music ─ Music trivia 🎵\n"
-    "├─ /sports ─ Sports knowledge 🏅\n"
-    "└─ /general ─ General knowledge 🧠"
-    "</blockquote>\n\n"
-    "🚀 <b>Let’s begin your quiz journey now!</b>"
-	)
+        f"🎉 <b>Welcome, {user_mention}!</b>\n\n"
+        "🧠 <b>iQ Lost</b> brings you fun, fast, and smart quizzes across 24+ categories!\n\n"
+        "<blockquote>"
+        "🎯 <b>Key Features</b>\n"
+        "├─ Lightning-fast quiz delivery\n"
+        "├─ 24+ rich categories to explore\n"
+        "└─ Track your progress and compete\n\n"
+        "📋 <b>Quick Commands</b>\n"
+        "├─ /random ─ Surprise quiz 🎲\n"
+        "├─ /help ─ View all categories 📚\n"
+        "├─ /music ─ Music trivia 🎵\n"
+        "├─ /sports ─ Sports knowledge 🏅\n"
+        "└─ /general ─ General knowledge 🧠"
+        "</blockquote>\n\n"
+        "🚀 <b>Let’s begin your quiz journey now!</b>"
+    )
 
-    logger.info("📤 Sending welcome message with inline buttons")
+    selected_image = random.choice(IMAGE_URLS)
+    logger.debug(f"🖼️ Selected random image URL: {selected_image}")
+
+    logger.info("📤 Sending welcome message with image and inline buttons")
     if info['chat_type'] in ['group', 'supergroup']:
-        logger.info(f"📢 Sending start message as reply in group {info['chat_title']}")
-        response = await msg.reply(text, reply_markup=keyboard)
+        logger.info(f"📢 Sending image as reply in group '{info['chat_title']}' (ID: {msg.chat.id})")
+        response = await msg.reply_photo(
+            photo=selected_image,
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
     else:
-        logger.info(f"💬 Sending start message in private chat with {info['full_name']}")
-        response = await msg.answer(text, reply_markup=keyboard)
+        logger.info(f"💬 Sending image in private chat with {info['full_name']}")
+        response = await msg.answer_photo(
+            photo=selected_image,
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
 
-    logger.info(f"✅ Welcome message sent successfully, ID: {response.message_id}")
+    logger.info(f"✅ Welcome image with caption sent successfully, Message ID: {response.message_id}")
+    logger.debug("📡 /start command handling complete")
 
 @dp.message(Command("help"))
 async def cmd_help(msg: Message):
