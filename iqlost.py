@@ -556,13 +556,13 @@ async def cmd_start(msg: Message):
     user_mention = f"<a href='tg://user?id={msg.from_user.id}'>{info['full_name']}</a>"
 
     text = (
-    f"🎉 <b>Hey there, {user_mention}! Welcome!</b>\n\n"
-    "🧠 <b>iQ Lost</b> brings you fun, fast, and smart quizzes across 24+ categories!\n"
+    f"🎉 <b>Hey there {user_mention}, Welcome!</b>\n\n"
+    "🧠 <b>iQ Lost</b> brings you fun, fast, and smart quizzes across 24+ categories!\n\n"
     "<blockquote>"
     "🎯 <b>Key Features</b>\n"
     "├─ Lightning-fast quiz delivery\n"
     "├─ 24+ rich categories to explore\n"
-    "└─ Track your progress and compete"
+    "└─ Track progress and compete\n"
     "</blockquote>"
     "🚀 <b>Let’s begin your quiz journey now!</b>"
 	)
