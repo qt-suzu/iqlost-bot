@@ -562,8 +562,8 @@ async def cmd_start(msg: Message):
     "🎯 <b>Key Features</b>\n"
     "├─ Lightning-fast quiz delivery\n"
     "├─ 24+ rich categories to explore\n"
-    "└─ Track your progress and compete\n"
-    "</blockquote>\n\n"
+    "└─ Track your progress and compete"
+    "</blockquote>"
     "🚀 <b>Let’s begin your quiz journey now!</b>"
 	)
 
