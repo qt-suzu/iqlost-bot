@@ -500,26 +500,28 @@ def register_category_handlers():
     logger.info("✅ All 24 category command handlers registered successfully")
 
 IMAGE_URLS = [
-    "https://i.postimg.cc/x841BwFW/New-Project-235-FFA9646.png",
-    "https://i.postimg.cc/5NC7HwSV/New-Project-235-A06-DD7-A.png",
-    "https://i.postimg.cc/HnPqpdm9/New-Project-235-9-E45-B87.png",
-    "https://i.postimg.cc/1tSPTmRg/New-Project-235-AB394-C0.png",
-    "https://i.postimg.cc/8ct1M2S7/New-Project-235-9-CAE309.png",
-    "https://i.postimg.cc/TYtwDDdt/New-Project-235-2-F658-B0.png",
-    "https://i.postimg.cc/xdwqdVfY/New-Project-235-68-BAF06.png",
-    "https://i.postimg.cc/hPczxn9t/New-Project-235-9-E9-A004.png",
-    "https://i.postimg.cc/jjFPQ1Rk/New-Project-235-A1-E7-CC1.png",
-    "https://i.postimg.cc/TPqJV0pz/New-Project-235-CA65155.png",
-    "https://i.postimg.cc/wBh0WHbb/New-Project-235-89799-CD.png",
-    "https://i.postimg.cc/FKdQ1fzk/New-Project-235-C377613.png",
-    "https://i.postimg.cc/rpKqWnnm/New-Project-235-CFD2548.png",
-    "https://i.postimg.cc/g0kn7HMF/New-Project-235-C4-A32-AC.png",
-    "https://i.postimg.cc/XY6jRkY1/New-Project-235-28-DCBC9.png",
-    "https://i.postimg.cc/SN32J9Nc/New-Project-235-99-D1478.png",
-    "https://i.postimg.cc/8C86n62T/New-Project-235-F1556-B9.png",
-    "https://i.postimg.cc/RCGwVqHT/New-Project-235-5-BBB339.png",
-    "https://i.postimg.cc/pTfYBZyN/New-Project-235-17-D796-A.png",
-    "https://i.postimg.cc/zGgdgJJc/New-Project-235-165-FE5-A.png"
+    "https://i.postimg.cc/RhtZR0sF/New-Project-235-28-ED42-B.png",
+    "https://i.postimg.cc/k4z5KSyz/New-Project-235-8-AFAF2-A.png",
+    "https://i.postimg.cc/N0NFGS2g/New-Project-235-09-DD635.png",
+    "https://i.postimg.cc/6pfTgy94/New-Project-235-3-D5-D3-F1.png",
+    "https://i.postimg.cc/dVYL58KK/New-Project-235-4235-F6-E.png",
+    "https://i.postimg.cc/tCPsdBw5/New-Project-235-3459944.png",
+    "https://i.postimg.cc/8k7Jcpbx/New-Project-235-3079612.png",
+    "https://i.postimg.cc/MXk8KbYZ/New-Project-235-9-A5-CAF0.png",
+    "https://i.postimg.cc/qRRrm7Rr/New-Project-235-FE6-E983.png",
+    "https://i.postimg.cc/zfp5Shqp/New-Project-235-5-B71865.png",
+    "https://i.postimg.cc/BvJ4KpfX/New-Project-235-739-D6-D5.png",
+    "https://i.postimg.cc/t439JffK/New-Project-235-B98-C0-D6.png",
+    "https://i.postimg.cc/pLb22x0Q/New-Project-235-28-F28-CA.png",
+    "https://i.postimg.cc/MHgzf8zS/New-Project-235-AB8-F78-F.png",
+    "https://i.postimg.cc/wvfqHmP3/New-Project-235-5952549.png",
+    "https://i.postimg.cc/mrSZXqyY/New-Project-235-D231974.png",
+    "https://i.postimg.cc/vmyHvMf8/New-Project-235-0-BC9-C74.png",
+    "https://i.postimg.cc/J4ynrpR8/New-Project-235-88-BC2-D0.png",
+    "https://i.postimg.cc/HnNk0y4F/New-Project-235-7462142.png",
+    "https://i.postimg.cc/tT2TTf1q/New-Project-235-CE958-B1.png",
+    "https://i.postimg.cc/Xv6XD9Sb/New-Project-235-0-E24-C88.png",
+    "https://i.postimg.cc/RhpNP89s/New-Project-235-FC3-A4-AD.png"
 ]
 
 @dp.message(Command("start"))
