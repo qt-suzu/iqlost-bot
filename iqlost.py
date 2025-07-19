@@ -644,10 +644,7 @@ async def cmd_broadcast(msg: Message):
     
     if msg.from_user.id != OWNER_ID:
         logger.warning(f"🚫 Unauthorized broadcast attempt by user {msg.from_user.id}")
-        await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
-        response = await msg.answer("⛔ This command is restricted.")
-        logger.info(f"⚠️ Unauthorized access message sent, ID: {response.message_id}")
-        return
+        return  # Just silently ignore
     
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
     
