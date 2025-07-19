@@ -665,6 +665,34 @@ async def cmd_broadcast(msg: Message):
     )
     logger.info(f"✅ Broadcast target selection sent, message ID: {response.message_id}")
 
+# Ping command handler
+
+@dp.message(F.text == "/ping")
+async def ping_command(msg: Message):
+    """Respond with bot latency (unregistered command)"""
+    info = extract_user_info(msg)
+
+    logger.info(f"📥 /ping received | Name: {info['full_name']} | Username: @{info['username']} | User ID: {info['user_id']} | Chat: {info['chat_title']} ({info['chat_type']}) | Chat ID: {info['chat_id']} | Link: {info['chat_link']}")
+
+    start = time.perf_counter()
+
+    try:
+        logger.debug(f"💬 Sending 'Pinging...' | User ID: {info['user_id']} | Chat ID: {info['chat_id']} | Name: {info['full_name']}")
+
+        response = await msg.answer("🏓 Pinging...")
+
+        end = time.perf_counter()
+        latency_ms = int((end - start) * 1000)
+
+        logger.debug(f"⏱️ Latency calculated: {latency_ms}ms | User ID: {info['user_id']} | Chat ID: {info['chat_id']} | Name: {info['full_name']}")
+
+        await response.edit_text(f"🏓 Pong! <b>{latency_ms}ms</b> 🚀", parse_mode=ParseMode.HTML)
+
+        logger.info(f"✅ Pong sent | Latency: {latency_ms}ms | Name: {info['full_name']} | Username: @{info['username']} | User ID: {info['user_id']} | Chat: {info['chat_title']} ({info['chat_type']}) | Chat ID: {info['chat_id']} | Link: {info['chat_link']}")
+
+    except Exception as e:
+        logger.error(f"❌ /ping failed | Name: {info['full_name']} | Username: @{info['username']} | User ID: {info['user_id']} | Chat: {info['chat_title']} ({info['chat_type']}) | Chat ID: {info['chat_id']} | Link: {info['chat_link']} | Error: {str(e)}")
+
 # Store help page states for users
 help_page_states = {}
 
