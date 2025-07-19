@@ -981,97 +981,12 @@ async def catch_all(msg: Message):
         
         for target_id in target_ids.copy():
             try:
-                # Handle different message types
-                if msg.photo:
-                    # Photo message
-                    await bot.send_photo(
-                        target_id, 
-                        msg.photo[-1].file_id, 
-                        caption=msg.caption,
-                        parse_mode=ParseMode.HTML if msg.caption_entities else None
-                    )
-                elif msg.video:
-                    # Video message
-                    await bot.send_video(
-                        target_id, 
-                        msg.video.file_id, 
-                        caption=msg.caption,
-                        parse_mode=ParseMode.HTML if msg.caption_entities else None
-                    )
-                elif msg.video_note:
-                    # Video note message
-                    await bot.send_video_note(target_id, msg.video_note.file_id)
-                elif msg.voice:
-                    # Voice message
-                    await bot.send_voice(
-                        target_id, 
-                        msg.voice.file_id,
-                        caption=msg.caption,
-                        parse_mode=ParseMode.HTML if msg.caption_entities else None
-                    )
-                elif msg.audio:
-                    # Audio message
-                    await bot.send_audio(
-                        target_id, 
-                        msg.audio.file_id,
-                        caption=msg.caption,
-                        parse_mode=ParseMode.HTML if msg.caption_entities else None
-                    )
-                elif msg.document:
-                    # Document message
-                    await bot.send_document(
-                        target_id, 
-                        msg.document.file_id,
-                        caption=msg.caption,
-                        parse_mode=ParseMode.HTML if msg.caption_entities else None
-                    )
-                elif msg.sticker:
-                    # Sticker message
-                    await bot.send_sticker(target_id, msg.sticker.file_id)
-                elif msg.animation:
-                    # GIF/Animation message
-                    await bot.send_animation(
-                        target_id, 
-                        msg.animation.file_id,
-                        caption=msg.caption,
-                        parse_mode=ParseMode.HTML if msg.caption_entities else None
-                    )
-                elif msg.location:
-                    # Location message
-                    await bot.send_location(
-                        target_id, 
-                        msg.location.latitude, 
-                        msg.location.longitude
-                    )
-                elif msg.contact:
-                    # Contact message
-                    await bot.send_contact(
-                        target_id,
-                        msg.contact.phone_number,
-                        msg.contact.first_name,
-                        last_name=msg.contact.last_name
-                    )
-                elif msg.poll:
-                    # Poll message
-                    await bot.send_poll(
-                        target_id,
-                        msg.poll.question,
-                        [option.text for option in msg.poll.options],
-                        is_anonymous=msg.poll.is_anonymous,
-                        type=msg.poll.type,
-                        allows_multiple_answers=msg.poll.allows_multiple_answers
-                    )
-                elif msg.text:
-                    # Text message
-                    await bot.send_message(
-                        target_id, 
-                        msg.text,
-                        parse_mode=ParseMode.HTML if msg.entities else None
-                    )
-                else:
-                    # Fallback for unknown message types
-                    await bot.send_message(target_id, "📢 Broadcast message (unsupported media type)")
-                
+                # Use copy_message for all types of messages
+                await bot.copy_message(
+                    target_id, 
+                    msg.chat.id,  # The original chat from which the message is being sent
+                    msg.message_id  # The original message's ID
+                )
                 success_count += 1
                 logger.debug(f"✅ Broadcast sent successfully to {target_name[:-1]} {target_id}")
             except Exception as e:
