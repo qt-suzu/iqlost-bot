@@ -9,7 +9,7 @@ from typing import Set
 import aiohttp
 from dotenv import load_dotenv
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 
 # ─── Imports for Dummy HTTP Server ──────────────────────────────────────────
 import threading
