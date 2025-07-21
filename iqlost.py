@@ -340,7 +340,10 @@ async def auto_quiz_loop():
                 for group_id in group_ids.copy():
                     try:
                         logger.info(f"📤 Sending auto quiz to group {group_id}")
-                        await asyncio.sleep(1.5)  # slight delay between groups
+                        await asyncio.sleep(1.5)
+                        
+                        await bot.send_chat_action(group_id, ChatAction.TYPING)
+
                         q, opts, correct_id, correct = await fetch_quiz(cat_id)
                         
                         await bot.send_poll(
@@ -364,7 +367,7 @@ async def auto_quiz_loop():
             logger.error(f"💥 Error in auto-quiz loop: {str(err)}")
 
         logger.info("⏱️ Sleeping for 30 minutes before next quiz cycle...")
-        await asyncio.sleep(10)
+        await asyncio.sleep(1800)
 
 # Category command handlers
 @dp.message(Command("general"))
