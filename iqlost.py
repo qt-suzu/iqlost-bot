@@ -326,6 +326,46 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str):
         # Always remove user from processing set
         user_processing.discard(user_id)
 
+async def auto_quiz_loop():
+    await bot.wait_until_ready() if hasattr(bot, "wait_until_ready") else asyncio.sleep(2)
+    
+    while True:
+        try:
+            if group_ids:
+                logger.info(f"⏰ Starting auto-quiz cycle for {len(group_ids)} groups")
+
+                cmd, (cat_id, emoji, desc) = random.choice(list(CATEGORIES.items()))
+                logger.info(f"🎯 Auto-quiz category: {desc} ({cat_id})")
+
+                for group_id in group_ids.copy():
+                    try:
+                        logger.info(f"📤 Sending auto quiz to group {group_id}")
+                        await asyncio.sleep(1.5)  # slight delay between groups
+                        q, opts, correct_id, correct = await fetch_quiz(cat_id)
+                        
+                        await bot.send_poll(
+                            chat_id=group_id,
+                            question=f"{q} {emoji}",
+                            options=opts,
+                            type="quiz",
+                            correct_option_id=correct_id,
+                            is_anonymous=False,
+                            explanation=f"💡 Correct Answer: {correct}",
+                        )
+                        logger.info(f"✅ Auto quiz sent to group {group_id}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to send quiz to group {group_id}: {str(e)}")
+                        group_ids.discard(group_id)
+
+            else:
+                logger.info("ℹ️ No groups to send auto-quiz")
+
+        except Exception as err:
+            logger.error(f"💥 Error in auto-quiz loop: {str(err)}")
+
+        logger.info("⏱️ Sleeping for 30 minutes before next quiz cycle...")
+        await asyncio.sleep(10)
+
 # Category command handlers
 @dp.message(Command("general"))
 async def cmd_general(msg: Message):
@@ -1127,8 +1167,7 @@ def start_dummy_server():
     server.serve_forever()
 
 if __name__ == "__main__":
-
-# Start dummy HTTP server (needed for Render health check)
+    # Start dummy HTTP server (needed for Render health check)
     threading.Thread(target=start_dummy_server, daemon=True).start()
 
     logger.info("🎯 Quiz Bot main execution started")
@@ -1146,6 +1185,12 @@ if __name__ == "__main__":
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
     dp.errors.register(global_error_handler)
-    
-    logger.info("🚀 Starting bot polling - quiz bot is now live!")
-    asyncio.run(dp.start_polling(bot))
+
+    async def main():
+        logger.info("🔁 Launching background auto quiz loop")
+        asyncio.create_task(auto_quiz_loop())
+        
+        logger.info("🚀 Starting bot polling - quiz bot is now live!")
+        await dp.start_polling(bot)
+
+    asyncio.run(main())
