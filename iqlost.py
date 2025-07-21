@@ -993,46 +993,57 @@ Good luck, quiz master! 🌟"""
 async def catch_all(msg: Message):
     """Handle broadcast functionality only - ignore other messages in groups"""
     info = extract_user_info(msg)
-    
-    # Only handle broadcast mode, ignore all other messages in groups
+
     if msg.from_user.id in broadcast_mode:
         logger.info(f"📡 Broadcasting message from owner {info['full_name']}")
-        
         await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
-        
+
         success_count = 0
         fail_count = 0
-        
-        # Get broadcast target for this owner
+
         target = broadcast_target.get(msg.from_user.id, "users")
         target_ids = user_ids if target == "users" else group_ids
         target_name = "users" if target == "users" else "groups"
-        
+
         logger.info(f"📊 Starting broadcast to {len(target_ids)} {target_name}")
-        
+
         for target_id in target_ids.copy():
             try:
-                # Use copy_message for all types of messages
-                await bot.copy_message(
-                    target_id, 
-                    msg.chat.id,  # The original chat from which the message is being sent
-                    msg.message_id  # The original message's ID
-                )
+                if msg.forward_from or msg.forward_from_chat:
+                    # If it's a forwarded message, use forward_message to preserve attribution
+                    await bot.forward_message(
+                        chat_id=target_id,
+                        from_chat_id=msg.chat.id,
+                        message_id=msg.message_id
+                    )
+                else:
+                    # Otherwise, use copy_message (better compatibility)
+                    await bot.copy_message(
+                        chat_id=target_id,
+                        from_chat_id=msg.chat.id,
+                        message_id=msg.message_id
+                    )
+
                 success_count += 1
                 logger.debug(f"✅ Broadcast sent successfully to {target_name[:-1]} {target_id}")
             except Exception as e:
                 fail_count += 1
                 logger.warning(f"❌ Failed to send broadcast to {target_name[:-1]} {target_id}: {str(e)}")
                 target_ids.discard(target_id)
-        
-        # Exit broadcast mode after sending one message
+
+        # Clean up broadcast state
         broadcast_mode.remove(msg.from_user.id)
-        broadcast_target.pop(msg.from_user.id, None)  # Clean up target selection
-        logger.info(f"🔒 Broadcast mode disabled for owner {info['full_name']}")
-        
+        broadcast_target.pop(msg.from_user.id, None)
+
         logger.info(f"📈 Broadcast complete. Success: {success_count}, Failed: {fail_count}")
-        
-        response = await msg.answer(f"📊 <b>Broadcast complete!</b>\n\n🎯 <b>Target:</b> {target_name.capitalize()}\n✅ <b>Sent:</b> {success_count}\n❌ <b>Failed:</b> {fail_count}\n\n🔒 Broadcast mode disabled.")
+
+        response = await msg.answer(
+            f"📊 <b>Broadcast complete!</b>\n\n"
+            f"🎯 <b>Target:</b> {target_name.capitalize()}\n"
+            f"✅ <b>Sent:</b> {success_count}\n"
+            f"❌ <b>Failed:</b> {fail_count}\n\n"
+            f"🔒 Broadcast mode disabled."
+        )
         logger.info(f"📋 Broadcast summary sent, ID: {response.message_id}")
     else:
         # Only respond to unknown commands in private chats, not groups
