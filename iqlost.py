@@ -366,8 +366,8 @@ async def auto_quiz_loop():
         except Exception as err:
             logger.error(f"💥 Error in auto-quiz loop: {str(err)}")
 
-        logger.info("⏱️ Sleeping for 30 minutes before next quiz cycle...")
-        await asyncio.sleep(1800)
+        logger.info("⏱️ Sleeping for 1 hour before next quiz cycle...")
+        await asyncio.sleep(3600)
 
 # Category command handlers
 @dp.message(Command("general"))
