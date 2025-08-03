@@ -724,20 +724,24 @@ async def ping_command(msg: Message):
 
         await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
 
-        response = await msg.answer("🛰️ Pinging...")
+        # Reply in groups, regular message in private
+        if msg.chat.type in ['group', 'supergroup']:
+            response = await msg.reply("🛰️ Pinging...")
+        else:
+            response = await msg.answer("🛰️ Pinging...")
 
         end = time.perf_counter()
-        latency_ms = (end - start) * 1000  # float ms
+        response_time = round((end - start) * 1000, 2)
 
-        logger.debug(f"⏱️ Latency calculated: {latency_ms:.2f}ms | User ID: {info['user_id']} | Chat ID: {info['chat_id']} | Name: {info['full_name']}")
+        logger.debug(f"⏱️ Latency calculated: {response_time}ms | User ID: {info['user_id']} | Chat ID: {info['chat_id']} | Name: {info['full_name']}")
 
         await response.edit_text(
-            f"🏓 <a href='https://t.me/SoulMeetsHQ'>Pong!</a> {latency_ms:.2f}ms",
+            f"🏓 <a href='https://t.me/SoulMeetsHQ'>Pong!</a> {response_time}ms",
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True
         )
 
-        logger.info(f"✅ Pong sent | Latency: {latency_ms:.2f}ms | Name: {info['full_name']} | Username: @{info['username']} | User ID: {info['user_id']} | Chat: {info['chat_title']} ({info['chat_type']}) | Chat ID: {info['chat_id']} | Link: {info['chat_link']}")
+        logger.info(f"✅ Pong sent | Latency: {response_time}ms | Name: {info['full_name']} | Username: @{info['username']} | User ID: {info['user_id']} | Chat: {info['chat_title']} ({info['chat_type']}) | Chat ID: {info['chat_id']} | Link: {info['chat_link']}")
 
     except Exception as e:
         logger.error(f"❌ /ping failed | Name: {info['full_name']} | Username: @{info['username']} | User ID: {info['user_id']} | Chat: {info['chat_title']} ({info['chat_type']}) | Chat ID: {info['chat_id']} | Link: {info['chat_link']} | Error: {str(e)}")
