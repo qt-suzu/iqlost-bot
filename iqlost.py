@@ -780,7 +780,7 @@ async def cmd_score(msg: Message):
         
         if total_quiz_attempts == 0:
             response = await msg.reply(
-                "📊 <b>Quiz Leaderboard</b>\n\n"
+                "🏆 <b>iQ Lost Leaderboard</b> 🏆\n\n"
                 "❌ No quiz data available yet!\n\n"
                 "🎯 <b>Start playing quizzes to see the leaderboard!</b>\n"
                 f"📈 Total registered users: {total_users}\n"
@@ -799,7 +799,7 @@ async def cmd_score(msg: Message):
     
     if not leaderboard:
         response = await msg.reply(
-            "📊 <b>Quiz Leaderboard</b>\n\n"
+            "🏆 <b>iQ Lost Leaderboard</b> 🏆\n\n"
             "❌ No quiz data available yet!\n\n"
             f"📈 Total registered users: {total_users}\n"
             f"📊 Quiz attempts recorded: {total_quiz_attempts}\n\n"
@@ -809,9 +809,7 @@ async def cmd_score(msg: Message):
         return
     
     # Build leaderboard message
-    text = "🏆 <b>Quiz Champions Leaderboard</b>\n\n"
-    text += "👑 <b>Top 20 Players:</b>\n"
-    text += "━━━━━━━━━━━━━━━━━━━━\n\n"
+    text = "🏆 <b>iQ Lost Leaderboard</b> 🏆\n\n"
     
     medals = ["🥇", "🥈", "🥉"]
     
@@ -832,13 +830,9 @@ async def cmd_score(msg: Message):
         else:
             rank = f"{i}."
         
-        text += f"{rank} {user_mention}\n"
-        text += f"   ✅ Correct: {correct} | ❌ Wrong: {wrong}\n"
-        text += f"   📊 Total: {total} | 🎯 Accuracy: {accuracy}%\n\n"
+        text += f"{rank} {user_mention} - W: {correct} | L: {wrong} | T: {total} | A: {accuracy}%\n\n"
     
-    text += "━━━━━━━━━━━━━━━━━━━━\n"
-    text += "🎮 <b>Keep playing to climb the ranks!</b>\n"
-    text += f"📈 Total players: {len(leaderboard)}"
+    text += f"🎗️ Only top 20 shown! Total players: {len(leaderboard)}"
     
     response = await msg.reply(text, disable_web_page_preview=True)
     logger.info(f"🏆 Leaderboard sent with {len(leaderboard)} players, ID: {response.message_id}")
