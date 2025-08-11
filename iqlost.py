@@ -624,18 +624,47 @@ async def handle_poll_answer(poll_answer):
     try:
         logger.info(f"📊 Poll answer received from user {poll_answer.user.full_name} (ID: {poll_answer.user.id})")
         logger.info(f"🔍 Looking for Poll ID: {poll_answer.poll_id}")
-        logger.debug(f"🔍 Available poll IDs: {list(active_polls.keys())}")
+        logger.debug(f"🔍 Available active poll IDs: {list(active_polls.keys())}")
+        logger.debug(f"🔍 Available pending poll keys: {list(pending_polls.keys())}")
         
-        if poll_answer.poll_id not in active_polls:
-            logger.error(f"❌ Poll ID {poll_answer.poll_id} not found in active polls")
+        poll_data = None
+        
+        # First check if it's already in active_polls
+        if poll_answer.poll_id in active_polls:
+            poll_data = active_polls[poll_answer.poll_id]
+            logger.info("✅ Found poll data in active_polls")
+        else:
+            # If not found in active polls, try to find and migrate from pending polls
+            logger.info("🔍 Poll not in active_polls, checking pending_polls...")
+            
+            # Look through pending polls - since we might have missed the poll update
+            current_time = time.time()
+            for key, pending_data in list(pending_polls.items()):
+                # Check if this pending poll is recent (within last 5 minutes)
+                if current_time - pending_data.get('timestamp', 0) < 300:
+                    logger.info(f"🎯 Found recent pending poll: {key}, moving to active with poll_id {poll_answer.poll_id}")
+                    
+                    # Move this data to active polls
+                    active_polls[poll_answer.poll_id] = pending_data.copy()
+                    poll_data = active_polls[poll_answer.poll_id]
+                    
+                    # Remove from pending
+                    del pending_polls[key]
+                    break
+                else:
+                    # Clean up old pending polls
+                    logger.debug(f"🗑️ Removing old pending poll: {key}")
+                    del pending_polls[key]
+        
+        if not poll_data:
+            logger.error(f"❌ Poll ID {poll_answer.poll_id} not found anywhere")
             logger.info(f"📋 Current active polls: {len(active_polls)}")
-            for poll_id, data in active_polls.items():
-                logger.info(f"   - {poll_id}: {data.get('category', 'Unknown')} - {data.get('question', 'No question')[:30]}...")
+            logger.info(f"📋 Current pending polls: {len(pending_polls)}")
+            
             # Still save the user
             await save_user(poll_answer.user.id, poll_answer.user.username, poll_answer.user.full_name)
             return
             
-        poll_data = active_polls[poll_answer.poll_id]
         user_id = poll_answer.user.id
         user_answer_index = poll_answer.option_ids[0] if poll_answer.option_ids else -1
         
