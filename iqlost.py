@@ -810,6 +810,7 @@ async def cmd_score(msg: Message):
     
     # Build leaderboard message
     text = "🏆 <b>iQ Lost Leaderboard</b> 🏆\n\n"
+    text += "<blockquote expandable>\n"
     
     medals = ["🥇", "🥈", "🥉"]
     
@@ -832,6 +833,7 @@ async def cmd_score(msg: Message):
         
         text += f"{rank} {user_mention} - W: {correct} | L: {wrong} | T: {total} | A: {accuracy}%\n\n"
     
+    text += "</blockquote>\n"
     text += f"🎗️ Only top 20 shown! Total players: {len(leaderboard)}"
     
     response = await msg.reply(text, disable_web_page_preview=True)
