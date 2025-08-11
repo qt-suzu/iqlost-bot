@@ -5,6 +5,9 @@ import random
 import time
 from html import unescape
 from typing import Set
+import asyncpg
+import json
+from datetime import datetime
 
 import aiohttp
 from dotenv import load_dotenv
@@ -136,14 +139,20 @@ logger.info("🚀 Quiz bot starting up - loading configuration")
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 OWNER_ID = 5290407067  # Hardcoded owner ID
 
 logger.info(f"🔑 Bot token loaded: {'✅ Success' if TOKEN else '❌ Missing'}")
+logger.info(f"🗄️ Database URL loaded: {'✅ Success' if DATABASE_URL else '❌ Missing'}")
 logger.info(f"👑 Owner ID configured: {OWNER_ID}")
 
 if not TOKEN:
     logger.error("❌ BOT_TOKEN environment variable missing - cannot start bot")
     raise ValueError("BOT_TOKEN is required")
+
+if not DATABASE_URL:
+    logger.error("❌ DATABASE_URL environment variable missing - cannot start bot")
+    raise ValueError("DATABASE_URL is required")
 
 logger.info("🤖 Initializing bot and dispatcher with HTML parse mode")
 bot = Bot(
@@ -152,6 +161,212 @@ bot = Bot(
 )
 dp = Dispatcher()
 logger.info("✅ Bot and dispatcher initialized successfully")
+
+# Database connection pool
+db_pool = None
+
+# Database functions
+async def init_database():
+    """Initialize database connection and create tables"""
+    global db_pool
+    logger.info("🗄️ Initializing database connection...")
+    
+    try:
+        db_pool = await asyncpg.create_pool(DATABASE_URL)
+        logger.info("✅ Database connection pool created successfully")
+        
+        async with db_pool.acquire() as connection:
+            # Create users table
+            await connection.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username VARCHAR(255),
+                    full_name VARCHAR(255),
+                    correct_answers INTEGER DEFAULT 0,
+                    wrong_answers INTEGER DEFAULT 0,
+                    total_quizzes INTEGER DEFAULT 0,
+                    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create groups table
+            await connection.execute('''
+                CREATE TABLE IF NOT EXISTS groups (
+                    group_id BIGINT PRIMARY KEY,
+                    group_title VARCHAR(255),
+                    group_username VARCHAR(255),
+                    added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    quiz_count INTEGER DEFAULT 0
+                )
+            ''')
+            
+            # Create quiz_stats table for tracking individual quiz attempts
+            await connection.execute('''
+                CREATE TABLE IF NOT EXISTS quiz_stats (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES users(user_id),
+                    group_id BIGINT,
+                    category VARCHAR(50),
+                    question TEXT,
+                    user_answer VARCHAR(255),
+                    correct_answer VARCHAR(255),
+                    is_correct BOOLEAN,
+                    answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+        logger.info("✅ Database tables created/verified successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {str(e)}")
+        raise
+
+async def save_user(user_id: int, username: str, full_name: str):
+    """Save or update user in database"""
+    if not db_pool:
+        return
+        
+    try:
+        async with db_pool.acquire() as connection:
+            await connection.execute('''
+                INSERT INTO users (user_id, username, full_name, last_active)
+                VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id) 
+                DO UPDATE SET 
+                    username = $2,
+                    full_name = $3,
+                    last_active = CURRENT_TIMESTAMP
+            ''', user_id, username, full_name)
+            
+        logger.debug(f"💾 User saved to database: {full_name} (ID: {user_id})")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to save user {user_id}: {str(e)}")
+
+async def save_group(group_id: int, group_title: str, group_username: str):
+    """Save or update group in database"""
+    if not db_pool:
+        return
+        
+    try:
+        async with db_pool.acquire() as connection:
+            await connection.execute('''
+                INSERT INTO groups (group_id, group_title, group_username, last_active)
+                VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+                ON CONFLICT (group_id) 
+                DO UPDATE SET 
+                    group_title = $2,
+                    group_username = $3,
+                    last_active = CURRENT_TIMESTAMP
+            ''', group_id, group_title, group_username)
+            
+        logger.debug(f"💾 Group saved to database: {group_title} (ID: {group_id})")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to save group {group_id}: {str(e)}")
+
+async def record_quiz_answer(user_id: int, group_id: int, category: str, question: str, 
+                           user_answer: str, correct_answer: str, is_correct: bool):
+    """Record quiz answer in database"""
+    if not db_pool:
+        return
+        
+    try:
+        async with db_pool.acquire() as connection:
+            # Record the quiz attempt
+            await connection.execute('''
+                INSERT INTO quiz_stats 
+                (user_id, group_id, category, question, user_answer, correct_answer, is_correct)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ''', user_id, group_id, category, question, user_answer, correct_answer, is_correct)
+            
+            # Update user statistics
+            if is_correct:
+                await connection.execute('''
+                    UPDATE users 
+                    SET correct_answers = correct_answers + 1,
+                        total_quizzes = total_quizzes + 1,
+                        last_active = CURRENT_TIMESTAMP
+                    WHERE user_id = $1
+                ''', user_id)
+            else:
+                await connection.execute('''
+                    UPDATE users 
+                    SET wrong_answers = wrong_answers + 1,
+                        total_quizzes = total_quizzes + 1,
+                        last_active = CURRENT_TIMESTAMP
+                    WHERE user_id = $1
+                ''', user_id)
+            
+            # Update group quiz count
+            if group_id:
+                await connection.execute('''
+                    UPDATE groups 
+                    SET quiz_count = quiz_count + 1,
+                        last_active = CURRENT_TIMESTAMP
+                    WHERE group_id = $1
+                ''', group_id)
+                
+        logger.debug(f"📊 Quiz answer recorded for user {user_id}: {'✅' if is_correct else '❌'}")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to record quiz answer for user {user_id}: {str(e)}")
+
+async def get_leaderboard(limit: int = 20):
+    """Get top players leaderboard"""
+    if not db_pool:
+        return []
+        
+    try:
+        async with db_pool.acquire() as connection:
+            rows = await connection.fetch('''
+                SELECT user_id, username, full_name, correct_answers, wrong_answers, total_quizzes,
+                       CASE 
+                           WHEN total_quizzes > 0 THEN 
+                               ROUND((correct_answers::DECIMAL / total_quizzes::DECIMAL) * 100, 1)
+                           ELSE 0 
+                       END as accuracy
+                FROM users 
+                WHERE total_quizzes > 0
+                ORDER BY correct_answers DESC, accuracy DESC, total_quizzes DESC
+                LIMIT $1
+            ''', limit)
+            
+        return rows
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to get leaderboard: {str(e)}")
+        return []
+
+async def get_all_user_ids():
+    """Get all user IDs for broadcasting"""
+    if not db_pool:
+        return set()
+        
+    try:
+        async with db_pool.acquire() as connection:
+            rows = await connection.fetch('SELECT user_id FROM users')
+            return set(row['user_id'] for row in rows)
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to get user IDs: {str(e)}")
+        return set()
+
+async def get_all_group_ids():
+    """Get all group IDs for broadcasting"""
+    if not db_pool:
+        return set()
+        
+    try:
+        async with db_pool.acquire() as connection:
+            rows = await connection.fetch('SELECT group_id FROM groups')
+            return set(row['group_id'] for row in rows)
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to get group IDs: {str(e)}")
+        return set()
 
 CATEGORIES = {
     "general":   (9,  "🧠", "General Knowledge"),
@@ -188,6 +403,7 @@ user_ids: Set[int] = set()
 group_ids: Set[int] = set()
 broadcast_mode: Set[int] = set()
 broadcast_target: dict = {}  # Store broadcast target choice for each owner
+auto_quiz_active_groups: Set[int] = set()  # Groups where auto-quiz is active
 
 # User throttling to prevent spam and rate limit issues
 user_last_request = {}
@@ -255,7 +471,7 @@ async def fetch_quiz(category_id: int):
                 logger.error(f"❌ All retries exhausted for category {category_id}")
                 raise e
 
-async def send_quiz(msg: Message, cat_id: int, emoji: str):
+async def send_quiz(msg: Message, cat_id: int, emoji: str, category_name: str = None):
     """Send quiz poll to user with typing indicator and throttling"""
     info = extract_user_info(msg)
     user_id = info['user_id']
@@ -280,10 +496,16 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str):
     
     logger.info(f"🎯 Sending quiz to user {info['full_name']} for category {cat_id}")
     
-    # Track groups when quiz is sent
+    # Save user and group to database
+    await save_user(user_id, info['username'], info['full_name'])
+    
+    group_id = None
     if info['chat_type'] in ['group', 'supergroup']:
-        group_ids.add(msg.chat.id)
-        logger.info(f"📢 Group added to database. Total groups: {len(group_ids)}")
+        group_id = msg.chat.id
+        group_ids.add(group_id)
+        auto_quiz_active_groups.add(group_id)  # Activate auto-quiz for this group
+        await save_group(group_id, info['chat_title'], info['chat_username'])
+        logger.info(f"📢 Group added to database and auto-quiz activated. Total groups: {len(group_ids)}")
     
     try:
         logger.debug("⌨️ Showing typing indicator to user")
@@ -317,6 +539,18 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str):
             )
         logger.info(f"✅ Quiz poll sent successfully, message ID: {poll_msg.message_id}")
         
+        # Store quiz data for tracking answers (in a simple dict for now)
+        if not hasattr(send_quiz, 'active_polls'):
+            send_quiz.active_polls = {}
+        
+        send_quiz.active_polls[poll_msg.message_id] = {
+            'question': q,
+            'correct_answer': correct,
+            'options': opts,
+            'category': category_name or 'Unknown',
+            'group_id': group_id
+        }
+        
     except Exception as e:
         logger.error(f"💥 Error sending quiz: {str(e)}")
         # Silently handle errors - no "busy" message to user
@@ -326,18 +560,56 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str):
         # Always remove user from processing set
         user_processing.discard(user_id)
 
+@dp.poll_answer()
+async def handle_poll_answer(poll_answer):
+    """Handle poll answers to track user statistics"""
+    try:
+        if not hasattr(send_quiz, 'active_polls') or poll_answer.poll_id not in send_quiz.active_polls:
+            return
+            
+        poll_data = send_quiz.active_polls[poll_answer.poll_id]
+        user_id = poll_answer.user.id
+        user_answer_index = poll_answer.option_ids[0] if poll_answer.option_ids else -1
+        
+        if user_answer_index == -1:
+            return
+            
+        user_answer = poll_data['options'][user_answer_index]
+        correct_answer = poll_data['correct_answer']
+        is_correct = user_answer == correct_answer
+        
+        # Record the answer in database
+        await record_quiz_answer(
+            user_id=user_id,
+            group_id=poll_data.get('group_id'),
+            category=poll_data['category'],
+            question=poll_data['question'],
+            user_answer=user_answer,
+            correct_answer=correct_answer,
+            is_correct=is_correct
+        )
+        
+        # Save user info
+        await save_user(user_id, poll_answer.user.username, poll_answer.user.full_name)
+        
+        logger.info(f"📊 Poll answer recorded: {poll_answer.user.full_name} - {'✅ Correct' if is_correct else '❌ Wrong'}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error handling poll answer: {str(e)}")
+
 async def auto_quiz_loop():
+    """Send automatic quizzes to active groups every 2 hours"""
     await bot.wait_until_ready() if hasattr(bot, "wait_until_ready") else asyncio.sleep(2)
     
     while True:
         try:
-            if group_ids:
-                logger.info(f"⏰ Starting auto-quiz cycle for {len(group_ids)} groups")
+            if auto_quiz_active_groups:
+                logger.info(f"⏰ Starting auto-quiz cycle for {len(auto_quiz_active_groups)} active groups")
 
                 cmd, (cat_id, emoji, desc) = random.choice(list(CATEGORIES.items()))
                 logger.info(f"🎯 Auto-quiz category: {desc} ({cat_id})")
 
-                for group_id in group_ids.copy():
+                for group_id in auto_quiz_active_groups.copy():
                     try:
                         logger.info(f"📤 Sending auto quiz to group {group_id}")
                         await asyncio.sleep(1.5)
@@ -346,7 +618,7 @@ async def auto_quiz_loop():
 
                         q, opts, correct_id, correct = await fetch_quiz(cat_id)
                         
-                        await bot.send_poll(
+                        poll_msg = await bot.send_poll(
                             chat_id=group_id,
                             question=f"{q} {emoji}",
                             options=opts,
@@ -355,19 +627,84 @@ async def auto_quiz_loop():
                             is_anonymous=False,
                             explanation=f"💡 Correct Answer: {correct}",
                         )
+                        
+                        # Store poll data for tracking
+                        if not hasattr(send_quiz, 'active_polls'):
+                            send_quiz.active_polls = {}
+                            
+                        send_quiz.active_polls[poll_msg.message_id] = {
+                            'question': q,
+                            'correct_answer': correct,
+                            'options': opts,
+                            'category': desc,
+                            'group_id': group_id
+                        }
+                        
                         logger.info(f"✅ Auto quiz sent to group {group_id}")
+                        
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to send quiz to group {group_id}: {str(e)}")
-                        group_ids.discard(group_id)
+                        auto_quiz_active_groups.discard(group_id)
 
             else:
-                logger.info("ℹ️ No groups to send auto-quiz")
+                logger.info("ℹ️ No active groups for auto-quiz")
 
         except Exception as err:
             logger.error(f"💥 Error in auto-quiz loop: {str(err)}")
 
-        logger.info("⏱️ Sleeping for 2 hour before next quiz cycle...")
+        logger.info("⏱️ Sleeping for 2 hours before next quiz cycle...")
         await asyncio.sleep(7200)
+
+@dp.message(Command("score"))
+async def cmd_score(msg: Message):
+    """Handle score command to show leaderboard"""
+    info = extract_user_info(msg)
+    logger.info(f"🏆 Score/leaderboard requested by {info['full_name']}")
+    
+    await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
+    
+    # Get leaderboard data
+    leaderboard = await get_leaderboard(20)
+    
+    if not leaderboard:
+        response = await msg.reply("📊 <b>Quiz Leaderboard</b>\n\n❌ No quiz data available yet!\n\nStart playing quizzes to see the leaderboard! 🎯")
+        logger.info(f"📋 Empty leaderboard sent, ID: {response.message_id}")
+        return
+    
+    # Build leaderboard message
+    text = "🏆 <b>Quiz Champions Leaderboard</b>\n\n"
+    text += "👑 <b>Top 20 Players:</b>\n"
+    text += "━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    medals = ["🥇", "🥈", "🥉"]
+    
+    for i, player in enumerate(leaderboard, 1):
+        user_id = player['user_id']
+        full_name = player['full_name'] or "Unknown Player"
+        correct = player['correct_answers']
+        wrong = player['wrong_answers']
+        total = player['total_quizzes']
+        accuracy = player['accuracy']
+        
+        # Create clickable mention
+        user_mention = f"<a href='tg://user?id={user_id}'>{full_name}</a>"
+        
+        # Get medal or rank number
+        if i <= 3:
+            rank = medals[i-1]
+        else:
+            rank = f"{i}."
+        
+        text += f"{rank} {user_mention}\n"
+        text += f"   ✅ Correct: {correct} | ❌ Wrong: {wrong}\n"
+        text += f"   📊 Total: {total} | 🎯 Accuracy: {accuracy}%\n\n"
+    
+    text += "━━━━━━━━━━━━━━━━━━━━\n"
+    text += "🎮 <b>Keep playing to climb the ranks!</b>\n"
+    text += f"📈 Total players: {len(leaderboard)}"
+    
+    response = await msg.reply(text, disable_web_page_preview=True)
+    logger.info(f"🏆 Leaderboard sent with {len(leaderboard)} players, ID: {response.message_id}")
 
 # Category command handlers
 @dp.message(Command("general"))
@@ -375,168 +712,168 @@ async def cmd_general(msg: Message):
     """Handle general knowledge quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🧠 General quiz requested by {info['full_name']}")
-    await send_quiz(msg, 9, "🧠")
+    await send_quiz(msg, 9, "🧠", "General Knowledge")
 
 @dp.message(Command("books"))
 async def cmd_books(msg: Message):
     """Handle books quiz command"""
     info = extract_user_info(msg)
     logger.info(f"📚 Books quiz requested by {info['full_name']}")
-    await send_quiz(msg, 10, "📚")
+    await send_quiz(msg, 10, "📚", "Books")
 
 @dp.message(Command("film"))
 async def cmd_film(msg: Message):
     """Handle film quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🎬 Film quiz requested by {info['full_name']}")
-    await send_quiz(msg, 11, "🎬")
+    await send_quiz(msg, 11, "🎬", "Film")
 
 @dp.message(Command("music"))
 async def cmd_music(msg: Message):
     """Handle music quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🎵 Music quiz requested by {info['full_name']}")
-    await send_quiz(msg, 12, "🎵")
+    await send_quiz(msg, 12, "🎵", "Music")
 
 @dp.message(Command("musicals"))
 async def cmd_musicals(msg: Message):
     """Handle musicals quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🎭 Musicals quiz requested by {info['full_name']}")
-    await send_quiz(msg, 13, "🎭")
+    await send_quiz(msg, 13, "🎭", "Musicals")
 
 @dp.message(Command("tv"))
 async def cmd_tv(msg: Message):
     """Handle TV shows quiz command"""
     info = extract_user_info(msg)
     logger.info(f"📺 TV quiz requested by {info['full_name']}")
-    await send_quiz(msg, 14, "📺")
+    await send_quiz(msg, 14, "📺", "TV Shows")
 
 @dp.message(Command("games"))
 async def cmd_games(msg: Message):
     """Handle video games quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🎮 Games quiz requested by {info['full_name']}")
-    await send_quiz(msg, 15, "🎮")
+    await send_quiz(msg, 15, "🎮", "Video Games")
 
 @dp.message(Command("board"))
 async def cmd_board(msg: Message):
     """Handle board games quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🎲 Board games quiz requested by {info['full_name']}")
-    await send_quiz(msg, 16, "🎲")
+    await send_quiz(msg, 16, "🎲", "Board Games")
 
 @dp.message(Command("nature"))
 async def cmd_nature(msg: Message):
     """Handle nature quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🌿 Nature quiz requested by {info['full_name']}")
-    await send_quiz(msg, 17, "🌿")
+    await send_quiz(msg, 17, "🌿", "Nature")
 
 @dp.message(Command("computers"))
 async def cmd_computers(msg: Message):
     """Handle computers quiz command"""
     info = extract_user_info(msg)
     logger.info(f"💻 Computers quiz requested by {info['full_name']}")
-    await send_quiz(msg, 18, "💻")
+    await send_quiz(msg, 18, "💻", "Computers")
 
 @dp.message(Command("math"))
 async def cmd_math(msg: Message):
     """Handle mathematics quiz command"""
     info = extract_user_info(msg)
     logger.info(f"➗ Math quiz requested by {info['full_name']}")
-    await send_quiz(msg, 19, "➗")
+    await send_quiz(msg, 19, "➗", "Mathematics")
 
 @dp.message(Command("mythology"))
 async def cmd_mythology(msg: Message):
     """Handle mythology quiz command"""
     info = extract_user_info(msg)
     logger.info(f"⚡ Mythology quiz requested by {info['full_name']}")
-    await send_quiz(msg, 20, "⚡")
+    await send_quiz(msg, 20, "⚡", "Mythology")
 
 @dp.message(Command("sports"))
 async def cmd_sports(msg: Message):
     """Handle sports quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🏅 Sports quiz requested by {info['full_name']}")
-    await send_quiz(msg, 21, "🏅")
+    await send_quiz(msg, 21, "🏅", "Sports")
 
 @dp.message(Command("geography"))
 async def cmd_geography(msg: Message):
     """Handle geography quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🌍 Geography quiz requested by {info['full_name']}")
-    await send_quiz(msg, 22, "🌍")
+    await send_quiz(msg, 22, "🌍", "Geography")
 
 @dp.message(Command("history"))
 async def cmd_history(msg: Message):
     """Handle history quiz command"""
     info = extract_user_info(msg)
     logger.info(f"📜 History quiz requested by {info['full_name']}")
-    await send_quiz(msg, 23, "📜")
+    await send_quiz(msg, 23, "📜", "History")
 
 @dp.message(Command("politics"))
 async def cmd_politics(msg: Message):
     """Handle politics quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🏛️ Politics quiz requested by {info['full_name']}")
-    await send_quiz(msg, 24, "🏛️")
+    await send_quiz(msg, 24, "🏛️", "Politics")
 
 @dp.message(Command("art"))
 async def cmd_art(msg: Message):
     """Handle art quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🎨 Art quiz requested by {info['full_name']}")
-    await send_quiz(msg, 25, "🎨")
+    await send_quiz(msg, 25, "🎨", "Art")
 
 @dp.message(Command("celebs"))
 async def cmd_celebs(msg: Message):
     """Handle celebrities quiz command"""
     info = extract_user_info(msg)
     logger.info(f"⭐ Celebrities quiz requested by {info['full_name']}")
-    await send_quiz(msg, 26, "⭐")
+    await send_quiz(msg, 26, "⭐", "Celebrities")
 
 @dp.message(Command("animals"))
 async def cmd_animals(msg: Message):
     """Handle animals quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🐾 Animals quiz requested by {info['full_name']}")
-    await send_quiz(msg, 27, "🐾")
+    await send_quiz(msg, 27, "🐾", "Animals")
 
 @dp.message(Command("vehicles"))
 async def cmd_vehicles(msg: Message):
     """Handle vehicles quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🚗 Vehicles quiz requested by {info['full_name']}")
-    await send_quiz(msg, 28, "🚗")
+    await send_quiz(msg, 28, "🚗", "Vehicles")
 
 @dp.message(Command("comics"))
 async def cmd_comics(msg: Message):
     """Handle comics quiz command"""
     info = extract_user_info(msg)
     logger.info(f"💥 Comics quiz requested by {info['full_name']}")
-    await send_quiz(msg, 29, "💥")
+    await send_quiz(msg, 29, "💥", "Comics")
 
 @dp.message(Command("gadgets"))
 async def cmd_gadgets(msg: Message):
     """Handle gadgets quiz command"""
     info = extract_user_info(msg)
     logger.info(f"📱 Gadgets quiz requested by {info['full_name']}")
-    await send_quiz(msg, 30, "📱")
+    await send_quiz(msg, 30, "📱", "Gadgets")
 
 @dp.message(Command("anime"))
 async def cmd_anime(msg: Message):
     """Handle anime quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🀄 Anime quiz requested by {info['full_name']}")
-    await send_quiz(msg, 31, "🀄")
+    await send_quiz(msg, 31, "🀄", "Anime")
 
 @dp.message(Command("cartoons"))
 async def cmd_cartoons(msg: Message):
     """Handle cartoons quiz command"""
     info = extract_user_info(msg)
     logger.info(f"🎪 Cartoons quiz requested by {info['full_name']}")
-    await send_quiz(msg, 32, "🎪")
+    await send_quiz(msg, 32, "🎪", "Cartoons")
 
 def register_category_handlers():
     """All category handlers registered using decorators"""
@@ -573,12 +910,16 @@ async def cmd_start(msg: Message):
     info = extract_user_info(msg)
     logger.info(f"🚀 Start command received from {info['full_name']} (ID: {msg.from_user.id})")
 
+    # Save user to database
+    await save_user(msg.from_user.id, info['username'], info['full_name'])
     user_ids.add(msg.from_user.id)
     logger.info(f"👥 User added to database. Total users: {len(user_ids)}")
 
     if info['chat_type'] in ['group', 'supergroup']:
         group_ids.add(msg.chat.id)
-        logger.info(f"📢 Group added to database. Total groups: {len(group_ids)}")
+        auto_quiz_active_groups.add(msg.chat.id)  # Activate auto-quiz
+        await save_group(msg.chat.id, info['chat_title'], info['chat_username'])
+        logger.info(f"📢 Group added to database and auto-quiz activated. Total groups: {len(group_ids)}")
 
     logger.debug("⌨️ Showing typing indicator")
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
@@ -607,9 +948,10 @@ async def cmd_start(msg: Message):
 <blockquote>🎯 <b>Key Features</b>
 ├─ Lightning-fast quiz delivery
 ├─ 24+ rich categories to explore
+├─ Global leaderboard system
 └─ Track progress and compete</blockquote>
 
-🚀 <b>Let’s begin your quiz journey now!</b>"""
+🚀 <b>Let's begin your quiz journey now!</b>"""
 
     selected_image = random.choice(IMAGE_URLS)
     logger.debug(f"🖼️ Selected random image URL: {selected_image}")
@@ -641,17 +983,19 @@ async def cmd_help(msg: Message):
     info = extract_user_info(msg)
     logger.info(f"❓ Help command requested by {info['full_name']}")
 
+    # Save user to database
+    await save_user(msg.from_user.id, info['username'], info['full_name'])
     user_ids.add(msg.from_user.id)
     logger.info(f"👥 User added to database. Total users: {len(user_ids)}")
     
     # Track groups when help is used
     if info['chat_type'] in ['group', 'supergroup']:
         group_ids.add(msg.chat.id)
-        logger.info(f"📢 Group added to database. Total groups: {len(group_ids)}")
+        auto_quiz_active_groups.add(msg.chat.id)  # Activate auto-quiz
+        await save_group(msg.chat.id, info['chat_title'], info['chat_username'])
+        logger.info(f"📢 Group added to database and auto-quiz activated. Total groups: {len(group_ids)}")
 
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
-
-
 
     logger.info("📤 Sending basic help message with expand option")
     await show_basic_help(msg)
@@ -663,13 +1007,17 @@ async def cmd_random(msg: Message):
     info = extract_user_info(msg)
     logger.info(f"🎲 Random quiz requested by {info['full_name']}")
     
+    # Save user to database
+    await save_user(msg.from_user.id, info['username'], info['full_name'])
     user_ids.add(msg.from_user.id)
     logger.info(f"👥 User added to database. Total users: {len(user_ids)}")
     
     # Track groups when random quiz is used
     if info['chat_type'] in ['group', 'supergroup']:
         group_ids.add(msg.chat.id)
-        logger.info(f"📢 Group added to database. Total groups: {len(group_ids)}")
+        auto_quiz_active_groups.add(msg.chat.id)  # Activate auto-quiz
+        await save_group(msg.chat.id, info['chat_title'], info['chat_username'])
+        logger.info(f"📢 Group added to database and auto-quiz activated. Total groups: {len(group_ids)}")
     
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
     
@@ -677,7 +1025,7 @@ async def cmd_random(msg: Message):
     cmd, (cat_id, emoji, desc) = random.choice(list(CATEGORIES.items()))
     logger.info(f"✨ Random category selected: {cmd} (ID: {cat_id}, {emoji} {desc})")
     
-    await send_quiz(msg, cat_id, emoji)
+    await send_quiz(msg, cat_id, emoji, desc)
 
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(msg: Message):
@@ -691,18 +1039,22 @@ async def cmd_broadcast(msg: Message):
     
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
     
+    # Get current counts from database
+    current_users = await get_all_user_ids()
+    current_groups = await get_all_group_ids()
+    
     # Create inline keyboard for broadcast target selection
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text=f"👥 Users ({len(user_ids)})", callback_data="broadcast_users"),
-            InlineKeyboardButton(text=f"📢 Groups ({len(group_ids)})", callback_data="broadcast_groups")
+            InlineKeyboardButton(text=f"👥 Users ({len(current_users)})", callback_data="broadcast_users"),
+            InlineKeyboardButton(text=f"📢 Groups ({len(current_groups)})", callback_data="broadcast_groups")
         ]
     ])
     
     response = await msg.answer(
         "📣 <b>Choose broadcast target:</b>\n\n"
-        f"👥 <b>Users:</b> {len(user_ids)} individual users\n"
-        f"📢 <b>Groups:</b> {len(group_ids)} groups\n\n"
+        f"👥 <b>Users:</b> {len(current_users)} individual users\n"
+        f"📢 <b>Groups:</b> {len(current_groups)} groups\n\n"
         "Select where you want to send your broadcast message:",
         reply_markup=keyboard
     )
@@ -764,8 +1116,14 @@ async def handle_help_pagination(callback: types.CallbackQuery):
         
         logger.info(f"👑 Enabling broadcast mode for owner {callback.from_user.id} - Target: {target}")
         
+        # Get actual counts from database
+        if target == "users":
+            current_targets = await get_all_user_ids()
+        else:
+            current_targets = await get_all_group_ids()
+        
         target_text = "individual users" if target == "users" else "groups"
-        target_count = len(user_ids) if target == "users" else len(group_ids)
+        target_count = len(current_targets)
         
         await callback.message.edit_text(
             f"📣 <b>Broadcast mode enabled!</b>\n\n"
@@ -830,6 +1188,7 @@ I'm your intelligent quiz companion with 24+ categories to challenge your knowle
 📋 <b>More Commands:</b>
 • /start - Welcome message
 • /help - This help menu
+• /score - View leaderboard 🏆
 
 Ready to test your knowledge? 🚀"""
 
@@ -853,20 +1212,22 @@ async def show_help_page(callback_or_msg, user_id, page, edit=False):
         1: f"""🎯 <b>iQ Lost Guide (1/10)</b>
 
 Hey {user_mention}, welcome to your quiz journey! 🌟  
-I’m iQ Lost! Your fun quiz buddy with 24+ categories from science to sports!
+I'm iQ Lost! Your fun quiz buddy with 24+ categories from science to sports!
 
 🎮 <b>How to Play:</b>  
 1. Pick a category  
 2. Answer polls & get instant facts  
 3. Learn, explore & have fun!
+4. Check your ranking with /score
 
 🏆 <b>Features:</b>  
 • 24+ topics  
 • Interactive polls  
 • Instant explanations  
+• Global leaderboard system
 • Fair play system
 
-Let’s make learning fun! 🚀""",
+Let's make learning fun! 🚀""",
         
         2: f"""📚 <b>Knowledge Categories (2/10)</b>
 
@@ -941,7 +1302,8 @@ Stay active with these topics, {user_mention}! 🏆
 /vehicles - Cars, planes, and transport
 
 🎯 <b>Special Commands:</b>
-/random - Get a surprise quiz from any category!""",
+/random - Get a surprise quiz from any category!
+/score - View the global leaderboard""",
         
         7: f"""💡 <b>Pro Tips & Strategies (7/10)</b>
 
@@ -952,11 +1314,17 @@ Master the quiz game, {user_mention}! 🎯
 • Think before answering
 • Learn from explanations
 • Try different categories
+• Check /score to see your progress
 
 ⚡ <b>Rate Limiting:</b>
 • 2-second cooldown between requests
 • Prevents spam and ensures fair play
-• Quality over quantity!""",
+• Quality over quantity!
+
+🏆 <b>Leaderboard System:</b>
+• Tracks correct vs wrong answers
+• Shows accuracy percentage
+• Updates in real-time""",
         
         8: f"""🎮 <b>Bot Features & Commands (8/10)</b>
 
@@ -966,11 +1334,16 @@ Unlock all features, {user_mention}! 🔓
 • Interactive poll questions
 • Instant explanations
 • Group and private chat support
+• Auto-quiz in active groups
 
 📋 <b>Main Commands:</b>
 /start - Welcome and introduction
 /help - This comprehensive guide
-/random - Random category quiz""",
+/random - Random category quiz
+/score - View global leaderboard
+
+🚀 <b>Auto-Quiz:</b>
+Groups get automatic quizzes every 2 hours once activated!""",
         
         9: f"""🏆 <b>Challenge Yourself (9/10)</b>
 
@@ -981,9 +1354,13 @@ Push your limits, {user_mention}! 💪
 • Focus on your weak areas
 • Challenge friends in groups
 • Set daily quiz goals
+• Aim for the top 20 leaderboard
 
 🌟 <b>Did You Know?</b>
-iQ Lost has carefully curated high-quality, verified questions across all categories to give you the best quiz experience!""",
+iQ Lost has carefully curated high-quality, verified questions across all categories to give you the best quiz experience!
+
+📊 <b>Track Progress:</b>
+Use /score anytime to see how you rank against other players worldwide!""",
         
         10: f"""🚀 <b>Ready to Begin? (10/10)</b>
 
@@ -995,6 +1372,9 @@ You're all set, {user_mention}! 🎓
 
 🎲 <b>Feeling Lucky?</b>
 Use /random for a surprise quiz!
+
+🏆 <b>Compete Globally:</b>
+Check /score to see the leaderboard and your ranking!
 
 🏆 <b>Remember:</b>
 Every expert was once a beginner. Start your iQ Lost journey today and watch your knowledge grow!
@@ -1038,7 +1418,7 @@ Good luck, quiz master! 🌟"""
 
 @dp.message()
 async def catch_all(msg: Message):
-    """Handle broadcast functionality only - ignore other messages in groups"""
+    """Handle broadcast functionality and auto-quiz activation"""
     info = extract_user_info(msg)
 
     if msg.from_user.id in broadcast_mode:
@@ -1049,12 +1429,18 @@ async def catch_all(msg: Message):
         fail_count = 0
 
         target = broadcast_target.get(msg.from_user.id, "users")
-        target_ids = user_ids if target == "users" else group_ids
+        
+        # Get actual target IDs from database
+        if target == "users":
+            target_ids = await get_all_user_ids()
+        else:
+            target_ids = await get_all_group_ids()
+        
         target_name = "users" if target == "users" else "groups"
 
         logger.info(f"📊 Starting broadcast to {len(target_ids)} {target_name}")
 
-        for target_id in target_ids.copy():
+        for target_id in list(target_ids):  # Convert to list to avoid set modification during iteration
             try:
                 if msg.forward_from or msg.forward_from_chat:
                     # If it's a forwarded message, use forward_message to preserve attribution
@@ -1076,7 +1462,6 @@ async def catch_all(msg: Message):
             except Exception as e:
                 fail_count += 1
                 logger.warning(f"❌ Failed to send broadcast to {target_name[:-1]} {target_id}: {str(e)}")
-                target_ids.discard(target_id)
 
         # Clean up broadcast state
         broadcast_mode.remove(msg.from_user.id)
@@ -1092,6 +1477,22 @@ async def catch_all(msg: Message):
             f"🔒 Broadcast mode disabled."
         )
         logger.info(f"📋 Broadcast summary sent, ID: {response.message_id}")
+        
+    elif info['chat_type'] in ['group', 'supergroup']:
+        # Handle group messages for auto-quiz activation
+        logger.debug(f"💬 Group message received in {info['chat_title']}")
+        
+        # Save group info and activate auto-quiz
+        group_ids.add(msg.chat.id)
+        auto_quiz_active_groups.add(msg.chat.id)
+        await save_group(msg.chat.id, info['chat_title'], info['chat_username'])
+        
+        # Save user info
+        await save_user(msg.from_user.id, info['username'], info['full_name'])
+        user_ids.add(msg.from_user.id)
+        
+        logger.info(f"🎯 Auto-quiz activated for group {info['chat_title']} due to member activity")
+        
     else:
         # Only respond to unknown commands in private chats, not groups
         if info['chat_type'] not in ['group', 'supergroup']:
@@ -1099,9 +1500,6 @@ async def catch_all(msg: Message):
             await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
             response = await msg.answer("🤔 I don't understand that command. Type /help to see available commands.")
             logger.info(f"💭 Unknown command response sent, ID: {response.message_id}")
-        else:
-            # Silently ignore non-command messages in groups
-            logger.debug(f"🔇 Ignoring non-command message in group {info['chat_title']}")
 
 async def global_error_handler(update: Update, exception):
     """Handle global errors gracefully"""
@@ -1117,6 +1515,7 @@ async def setup_bot_commands():
         BotCommand(command="start", description="🚀 Start Bot"),
         BotCommand(command="help", description="📚 Show Categories"),
         BotCommand(command="random", description="🎲 Random Quiz"),
+        BotCommand(command="score", description="🏆 Leaderboard"),
     ] + [
         BotCommand(command=cmd, description=f"{emoji} {' '.join(desc.split()[:2])}")
         for cmd, (_, emoji, desc) in CATEGORIES.items()
@@ -1135,6 +1534,9 @@ async def on_startup():
     session = aiohttp.ClientSession()
     logger.info("✅ HTTP session created successfully")
     
+    logger.info("🗄️ Initializing database connection")
+    await init_database()
+    
     logger.info("⚙️ Setting up bot commands menu")
     await setup_bot_commands()
     
@@ -1142,17 +1544,30 @@ async def on_startup():
     me = await bot.get_me()
     logger.info(f"🤖 Bot connected successfully: @{me.username} (ID: {me.id})")
     
+    # Load existing users and groups from database
+    global user_ids, group_ids, auto_quiz_active_groups
+    user_ids = await get_all_user_ids()
+    group_ids = await get_all_group_ids()
+    auto_quiz_active_groups = group_ids.copy()  # All existing groups are active
+    
+    logger.info(f"📊 Loaded {len(user_ids)} users and {len(group_ids)} groups from database")
+    
     logger.info("🎉 Startup sequence completed - bot is ready!")
 
 async def on_shutdown():
     """Clean up resources on shutdown"""
     logger.info("🛑 Bot shutdown sequence initiated")
     
-    global session
+    global session, db_pool
     if session:
         logger.info("🌐 Closing HTTP session")
         await session.close()
         logger.info("✅ HTTP session closed successfully")
+    
+    if db_pool:
+        logger.info("🗄️ Closing database connection pool")
+        await db_pool.close()
+        logger.info("✅ Database connection pool closed successfully")
     
     logger.info("👋 Bot shutdown completed")
 
@@ -1161,11 +1576,15 @@ class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is alive!")
+        self.wfile.write(b"iQ Lost Quiz Bot is alive!")
 
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
+        
+    def log_message(self, format, *args):
+        # Override to suppress HTTP server logs
+        pass
 
 def start_dummy_server():
     port = int(os.environ.get("PORT", 10000))  # Render injects this
