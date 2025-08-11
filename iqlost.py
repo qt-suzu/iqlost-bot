@@ -271,10 +271,19 @@ async def record_quiz_answer(user_id: int, group_id: int, category: str, questio
                            user_answer: str, correct_answer: str, is_correct: bool):
     """Record quiz answer in database"""
     if not db_pool:
+        logger.error("❌ Database pool not available for recording quiz answer")
         return
         
     try:
         async with db_pool.acquire() as connection:
+            # First ensure the user exists in the users table
+            await connection.execute('''
+                INSERT INTO users (user_id, username, full_name, last_active)
+                VALUES ($1, '', '', CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id) 
+                DO UPDATE SET last_active = CURRENT_TIMESTAMP
+            ''', user_id)
+            
             # Record the quiz attempt
             await connection.execute('''
                 INSERT INTO quiz_stats 
@@ -300,19 +309,33 @@ async def record_quiz_answer(user_id: int, group_id: int, category: str, questio
                     WHERE user_id = $1
                 ''', user_id)
             
-            # Update group quiz count
+            # Update group quiz count if it's a group
             if group_id:
                 await connection.execute('''
-                    UPDATE groups 
-                    SET quiz_count = quiz_count + 1,
+                    INSERT INTO groups (group_id, group_title, group_username, last_active)
+                    VALUES ($1, '', '', CURRENT_TIMESTAMP)
+                    ON CONFLICT (group_id) 
+                    DO UPDATE SET 
+                        quiz_count = quiz_count + 1,
                         last_active = CURRENT_TIMESTAMP
-                    WHERE group_id = $1
                 ''', group_id)
                 
-        logger.debug(f"📊 Quiz answer recorded for user {user_id}: {'✅' if is_correct else '❌'}")
+        logger.info(f"✅ Quiz answer recorded successfully for user {user_id}: {'✅' if is_correct else '❌'}")
+        
+        # Verify the data was saved
+        async with db_pool.acquire() as connection:
+            user_stats = await connection.fetchrow('''
+                SELECT total_quizzes, correct_answers, wrong_answers 
+                FROM users WHERE user_id = $1
+            ''', user_id)
+            if user_stats:
+                logger.info(f"📊 User {user_id} stats: {user_stats['total_quizzes']} total, {user_stats['correct_answers']} correct, {user_stats['wrong_answers']} wrong")
+            else:
+                logger.warning(f"⚠️ Could not verify stats for user {user_id}")
         
     except Exception as e:
         logger.error(f"❌ Failed to record quiz answer for user {user_id}: {str(e)}")
+        logger.exception("Full traceback:")
 
 async def get_leaderboard(limit: int = 20):
     """Get top players leaderboard"""
@@ -539,17 +562,16 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str, category_name: str = 
             )
         logger.info(f"✅ Quiz poll sent successfully, message ID: {poll_msg.message_id}")
         
-        # Store quiz data for tracking answers (in a simple dict for now)
-        if not hasattr(send_quiz, 'active_polls'):
-            send_quiz.active_polls = {}
-        
-        send_quiz.active_polls[poll_msg.message_id] = {
+        # Store quiz data for tracking answers in the global dictionary
+        active_polls[poll_msg.message_id] = {
             'question': q,
             'correct_answer': correct,
             'options': opts,
             'category': category_name or 'Unknown',
             'group_id': group_id
         }
+        
+        logger.info(f"📝 Poll data stored for tracking, Poll ID: {poll_msg.message_id}")
         
     except Exception as e:
         logger.error(f"💥 Error sending quiz: {str(e)}")
@@ -560,23 +582,35 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str, category_name: str = 
         # Always remove user from processing set
         user_processing.discard(user_id)
 
+# Global dictionary to store active polls
+active_polls = {}
+
 @dp.poll_answer()
 async def handle_poll_answer(poll_answer):
     """Handle poll answers to track user statistics"""
     try:
-        if not hasattr(send_quiz, 'active_polls') or poll_answer.poll_id not in send_quiz.active_polls:
+        logger.info(f"📊 Poll answer received from user {poll_answer.user.full_name} (ID: {poll_answer.user.id})")
+        logger.debug(f"🔍 Poll ID: {poll_answer.poll_id}, Options: {poll_answer.option_ids}")
+        
+        if poll_answer.poll_id not in active_polls:
+            logger.warning(f"⚠️ Poll ID {poll_answer.poll_id} not found in active polls")
+            # Let's still try to save the user even if we can't track the specific answer
+            await save_user(poll_answer.user.id, poll_answer.user.username, poll_answer.user.full_name)
             return
             
-        poll_data = send_quiz.active_polls[poll_answer.poll_id]
+        poll_data = active_polls[poll_answer.poll_id]
         user_id = poll_answer.user.id
         user_answer_index = poll_answer.option_ids[0] if poll_answer.option_ids else -1
         
         if user_answer_index == -1:
+            logger.warning(f"⚠️ No answer option selected by user {poll_answer.user.full_name}")
             return
             
         user_answer = poll_data['options'][user_answer_index]
         correct_answer = poll_data['correct_answer']
         is_correct = user_answer == correct_answer
+        
+        logger.info(f"🎯 User answer: '{user_answer}' | Correct: '{correct_answer}' | Result: {'✅ Correct' if is_correct else '❌ Wrong'}")
         
         # Record the answer in database
         await record_quiz_answer(
@@ -592,10 +626,11 @@ async def handle_poll_answer(poll_answer):
         # Save user info
         await save_user(user_id, poll_answer.user.username, poll_answer.user.full_name)
         
-        logger.info(f"📊 Poll answer recorded: {poll_answer.user.full_name} - {'✅ Correct' if is_correct else '❌ Wrong'}")
+        logger.info(f"✅ Poll answer successfully recorded: {poll_answer.user.full_name} - {'✅ Correct' if is_correct else '❌ Wrong'}")
         
     except Exception as e:
         logger.error(f"❌ Error handling poll answer: {str(e)}")
+        logger.exception("Full traceback:")
 
 async def auto_quiz_loop():
     """Send automatic quizzes to active groups every 2 hours"""
@@ -663,11 +698,47 @@ async def cmd_score(msg: Message):
     
     await bot.send_chat_action(msg.chat.id, ChatAction.TYPING)
     
+    # First, let's check if we have any data in the database at all
+    if not db_pool:
+        response = await msg.reply("❌ <b>Database Error</b>\n\nDatabase connection not available. Please try again later.")
+        return
+    
+    try:
+        # Check total users and quiz stats
+        async with db_pool.acquire() as connection:
+            total_users = await connection.fetchval("SELECT COUNT(*) FROM users")
+            total_quiz_attempts = await connection.fetchval("SELECT COUNT(*) FROM quiz_stats")
+            users_with_quizzes = await connection.fetchval("SELECT COUNT(*) FROM users WHERE total_quizzes > 0")
+            
+        logger.info(f"📊 Database stats: {total_users} total users, {users_with_quizzes} users with quizzes, {total_quiz_attempts} total attempts")
+        
+        if total_quiz_attempts == 0:
+            response = await msg.reply(
+                "📊 <b>Quiz Leaderboard</b>\n\n"
+                "❌ No quiz data available yet!\n\n"
+                "🎯 <b>Start playing quizzes to see the leaderboard!</b>\n"
+                f"📈 Total registered users: {total_users}\n"
+                f"📊 Quiz attempts recorded: {total_quiz_attempts}"
+            )
+            logger.info(f"📋 Empty leaderboard sent (no data), ID: {response.message_id}")
+            return
+    
+    except Exception as e:
+        logger.error(f"❌ Error checking database stats: {str(e)}")
+        response = await msg.reply("❌ <b>Database Error</b>\n\nCould not retrieve leaderboard data. Please try again later.")
+        return
+    
     # Get leaderboard data
     leaderboard = await get_leaderboard(20)
     
     if not leaderboard:
-        response = await msg.reply("📊 <b>Quiz Leaderboard</b>\n\n❌ No quiz data available yet!\n\nStart playing quizzes to see the leaderboard! 🎯")
+        response = await msg.reply(
+            "📊 <b>Quiz Leaderboard</b>\n\n"
+            "❌ No quiz data available yet!\n\n"
+            f"📈 Total registered users: {total_users}\n"
+            f"📊 Quiz attempts recorded: {total_quiz_attempts}\n\n"
+            "🎯 <b>Start playing quizzes to see the leaderboard!</b>"
+        )
         logger.info(f"📋 Empty leaderboard sent, ID: {response.message_id}")
         return
     
