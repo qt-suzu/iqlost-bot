@@ -562,16 +562,21 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str, category_name: str = 
             )
         logger.info(f"✅ Quiz poll sent successfully, message ID: {poll_msg.message_id}")
         
-        # Store quiz data for tracking answers in the global dictionary
+        # Store quiz data for tracking answers using the poll's unique ID
+        # We need to wait a moment for the poll to be fully created to get its poll_id
+        await asyncio.sleep(0.1)  # Small delay to ensure poll is created
+        
+        # Store using message_id for now, we'll update with poll_id when we get poll updates
         active_polls[poll_msg.message_id] = {
             'question': q,
             'correct_answer': correct,
             'options': opts,
             'category': category_name or 'Unknown',
-            'group_id': group_id
+            'group_id': group_id,
+            'message_id': poll_msg.message_id
         }
         
-        logger.info(f"📝 Poll data stored for tracking, Poll ID: {poll_msg.message_id}")
+        logger.info(f"📝 Poll data stored for tracking, Message ID: {poll_msg.message_id}")
         
     except Exception as e:
         logger.error(f"💥 Error sending quiz: {str(e)}")
@@ -585,6 +590,29 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str, category_name: str = 
 # Global dictionary to store active polls
 active_polls = {}
 
+@dp.poll()
+async def handle_poll_update(poll: types.Poll):
+    """Handle poll updates to map poll_id to message_id"""
+    try:
+        logger.info(f"📊 Poll update received: {poll.id}")
+        
+        # Find the message_id that corresponds to this poll
+        message_id_to_update = None
+        for msg_id, poll_data in active_polls.items():
+            if 'poll_id' not in poll_data:  # This poll hasn't been mapped yet
+                message_id_to_update = msg_id
+                break
+        
+        if message_id_to_update:
+            # Update the poll data with the actual poll_id
+            active_polls[message_id_to_update]['poll_id'] = poll.id
+            # Also store it with poll_id as key for easy lookup
+            active_polls[poll.id] = active_polls[message_id_to_update]
+            logger.info(f"📝 Mapped Message ID {message_id_to_update} to Poll ID {poll.id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error handling poll update: {str(e)}")
+
 @dp.poll_answer()
 async def handle_poll_answer(poll_answer):
     """Handle poll answers to track user statistics"""
@@ -592,13 +620,24 @@ async def handle_poll_answer(poll_answer):
         logger.info(f"📊 Poll answer received from user {poll_answer.user.full_name} (ID: {poll_answer.user.id})")
         logger.debug(f"🔍 Poll ID: {poll_answer.poll_id}, Options: {poll_answer.option_ids}")
         
-        if poll_answer.poll_id not in active_polls:
+        # Look for poll data using poll_id
+        poll_data = None
+        if poll_answer.poll_id in active_polls:
+            poll_data = active_polls[poll_answer.poll_id]
+        else:
+            # Fallback: look through all polls to find one with matching poll_id
+            for stored_poll in active_polls.values():
+                if stored_poll.get('poll_id') == poll_answer.poll_id:
+                    poll_data = stored_poll
+                    break
+        
+        if not poll_data:
             logger.warning(f"⚠️ Poll ID {poll_answer.poll_id} not found in active polls")
+            logger.debug(f"🔍 Available poll IDs: {list(active_polls.keys())}")
             # Let's still try to save the user even if we can't track the specific answer
             await save_user(poll_answer.user.id, poll_answer.user.username, poll_answer.user.full_name)
             return
             
-        poll_data = active_polls[poll_answer.poll_id]
         user_id = poll_answer.user.id
         user_answer_index = poll_answer.option_ids[0] if poll_answer.option_ids else -1
         
