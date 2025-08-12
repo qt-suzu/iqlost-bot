@@ -318,11 +318,11 @@ async def record_quiz_answer(user_id: int, group_id: int, category: str, questio
             # Update group quiz count if it's a group (but don't require group to exist)
             if group_id:
                 await connection.execute('''
-                    INSERT INTO groups (group_id, group_title, group_username, last_active)
-                    VALUES ($1, '', '', CURRENT_TIMESTAMP)
+                    INSERT INTO groups (group_id, group_title, group_username, quiz_count, last_active)
+                    VALUES ($1, '', '', 1, CURRENT_TIMESTAMP)
                     ON CONFLICT (group_id) 
                     DO UPDATE SET 
-                        quiz_count = COALESCE(quiz_count, 0) + 1,
+                        quiz_count = groups.quiz_count + 1,
                         last_active = CURRENT_TIMESTAMP
                 ''', group_id)
                 logger.debug(f"📢 Updated group {group_id} quiz count")
