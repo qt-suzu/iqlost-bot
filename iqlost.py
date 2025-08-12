@@ -857,7 +857,7 @@ async def cmd_score(msg: Message):
         else:
             text += f"{i}. <b>{user_mention}</b>\n"
         
-        text += f"╰─ W: {correct} | L: {wrong} | T: {total} | A: {accuracy}%\n\n"
+        text += f" ╰─ W: {correct} | L: {wrong} | T: {total} | A: {accuracy}%\n\n"
     
     text += "</blockquote>\n\n"
     text += f"🎗️ <b>Only top 20 shown! Total players: {len(leaderboard)}</b>"
