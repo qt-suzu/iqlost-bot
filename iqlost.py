@@ -1772,9 +1772,16 @@ if __name__ == "__main__":
 
     async def main():
         logger.info("🔁 Launching background auto quiz loop")
-        asyncio.create_task(auto_quiz_loop())
+        auto_quiz_task = asyncio.create_task(auto_quiz_loop())
         
         logger.info("🚀 Starting bot polling - quiz bot is now live!")
-        await dp.start_polling(bot)
+        try:
+            await dp.start_polling(bot)
+        finally:
+            auto_quiz_task.cancel()
+            try:
+                await auto_quiz_task
+            except asyncio.CancelledError:
+                pass
 
     asyncio.run(main())
