@@ -1763,9 +1763,6 @@ if __name__ == "__main__":
 
     logger.info("🎯 Quiz Bot main execution started")
     
-    # Enable better asyncio debugging
-    asyncio.get_event_loop().set_debug(True)
-    
     try:
         loop = asyncio.get_running_loop()
         logger.info(f"🐍 Python event loop: {loop}")
