@@ -276,13 +276,15 @@ async def record_quiz_answer(user_id: int, group_id: int, category: str, questio
         
     try:
         async with db_pool.acquire() as connection:
-            # First ensure the user exists in the users table
+            # First ensure the user exists in the users table (CRITICAL for group users)
             await connection.execute('''
                 INSERT INTO users (user_id, username, full_name, last_active)
                 VALUES ($1, '', '', CURRENT_TIMESTAMP)
                 ON CONFLICT (user_id) 
                 DO UPDATE SET last_active = CURRENT_TIMESTAMP
             ''', user_id)
+            
+            logger.debug(f"👤 Ensured user {user_id} exists in users table")
             
             # Record the quiz attempt
             await connection.execute('''
@@ -291,47 +293,53 @@ async def record_quiz_answer(user_id: int, group_id: int, category: str, questio
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
             ''', user_id, group_id, category, question, user_answer, correct_answer, is_correct)
             
+            logger.debug(f"📊 Quiz stats recorded for user {user_id}")
+            
             # Update user statistics
             if is_correct:
-                await connection.execute('''
+                result = await connection.execute('''
                     UPDATE users 
                     SET correct_answers = correct_answers + 1,
                         total_quizzes = total_quizzes + 1,
                         last_active = CURRENT_TIMESTAMP
                     WHERE user_id = $1
                 ''', user_id)
+                logger.debug(f"✅ Updated correct answer count for user {user_id}")
             else:
-                await connection.execute('''
+                result = await connection.execute('''
                     UPDATE users 
                     SET wrong_answers = wrong_answers + 1,
                         total_quizzes = total_quizzes + 1,
                         last_active = CURRENT_TIMESTAMP
                     WHERE user_id = $1
                 ''', user_id)
+                logger.debug(f"❌ Updated wrong answer count for user {user_id}")
             
-            # Update group quiz count if it's a group
+            # Update group quiz count if it's a group (but don't require group to exist)
             if group_id:
                 await connection.execute('''
                     INSERT INTO groups (group_id, group_title, group_username, last_active)
                     VALUES ($1, '', '', CURRENT_TIMESTAMP)
                     ON CONFLICT (group_id) 
                     DO UPDATE SET 
-                        quiz_count = quiz_count + 1,
+                        quiz_count = COALESCE(quiz_count, 0) + 1,
                         last_active = CURRENT_TIMESTAMP
                 ''', group_id)
+                logger.debug(f"📢 Updated group {group_id} quiz count")
                 
         logger.info(f"✅ Quiz answer recorded successfully for user {user_id}: {'✅' if is_correct else '❌'}")
+        logger.info(f"📍 Location: {'Group ' + str(group_id) if group_id else 'Private chat'}")
         
-        # Verify the data was saved
+        # Verify the data was saved by checking user stats
         async with db_pool.acquire() as connection:
             user_stats = await connection.fetchrow('''
                 SELECT total_quizzes, correct_answers, wrong_answers 
                 FROM users WHERE user_id = $1
             ''', user_id)
             if user_stats:
-                logger.info(f"📊 User {user_id} stats: {user_stats['total_quizzes']} total, {user_stats['correct_answers']} correct, {user_stats['wrong_answers']} wrong")
+                logger.info(f"📊 User {user_id} updated stats: {user_stats['total_quizzes']} total, {user_stats['correct_answers']} correct, {user_stats['wrong_answers']} wrong")
             else:
-                logger.warning(f"⚠️ Could not verify stats for user {user_id}")
+                logger.error(f"❌ CRITICAL: Could not find user {user_id} after saving!")
         
     except Exception as e:
         logger.error(f"❌ Failed to record quiz answer for user {user_id}: {str(e)}")
@@ -344,6 +352,14 @@ async def get_leaderboard(limit: int = 20):
         
     try:
         async with db_pool.acquire() as connection:
+            # Debug: Check what we have in the database
+            total_users = await connection.fetchval("SELECT COUNT(*) FROM users")
+            users_with_quizzes = await connection.fetchval("SELECT COUNT(*) FROM users WHERE total_quizzes > 0")
+            total_quiz_stats = await connection.fetchval("SELECT COUNT(*) FROM quiz_stats")
+            
+            logger.info(f"📊 Leaderboard query - Total users: {total_users}, With quizzes: {users_with_quizzes}, Quiz stats: {total_quiz_stats}")
+            
+            # Get leaderboard data including users who only answered in groups
             rows = await connection.fetch('''
                 SELECT user_id, username, full_name, correct_answers, wrong_answers, total_quizzes,
                        CASE 
@@ -357,10 +373,18 @@ async def get_leaderboard(limit: int = 20):
                 LIMIT $1
             ''', limit)
             
+            logger.info(f"📋 Leaderboard query returned {len(rows)} players")
+            
+            # Debug: Show sample data
+            if rows:
+                for i, row in enumerate(rows[:3]):  # Show top 3
+                    logger.info(f"   #{i+1}: {row['full_name']} - {row['correct_answers']} correct, {row['wrong_answers']} wrong, {row['total_quizzes']} total")
+            
         return rows
         
     except Exception as e:
         logger.error(f"❌ Failed to get leaderboard: {str(e)}")
+        logger.exception("Full traceback:")
         return []
 
 async def get_all_user_ids():
@@ -689,10 +713,11 @@ async def handle_poll_answer(poll_answer):
             is_correct=is_correct
         )
         
-        # Save user info
+        # Always save user info regardless of where they answered
         await save_user(user_id, poll_answer.user.username, poll_answer.user.full_name)
         
         logger.info(f"✅ Poll answer successfully recorded: {poll_answer.user.full_name} - {'✅ Correct' if is_correct else '❌ Wrong'}")
+        logger.info(f"📍 Answer location: {'Group' if poll_data.get('group_id') else 'Private'} chat")
         
     except Exception as e:
         logger.error(f"❌ Error handling poll answer: {str(e)}")
@@ -780,7 +805,7 @@ async def cmd_score(msg: Message):
         
         if total_quiz_attempts == 0:
             response = await msg.reply(
-                "🏆 <b>iQ Lost Leaderboard</b> 🏆\n\n"
+                "📊 <b>Quiz Leaderboard</b>\n\n"
                 "❌ No quiz data available yet!\n\n"
                 "🎯 <b>Start playing quizzes to see the leaderboard!</b>\n"
                 f"📈 Total registered users: {total_users}\n"
@@ -799,7 +824,7 @@ async def cmd_score(msg: Message):
     
     if not leaderboard:
         response = await msg.reply(
-            "🏆 <b>iQ Lost Leaderboard</b> 🏆\n\n"
+            "📊 <b>Quiz Leaderboard</b>\n\n"
             "❌ No quiz data available yet!\n\n"
             f"📈 Total registered users: {total_users}\n"
             f"📊 Quiz attempts recorded: {total_quiz_attempts}\n\n"
@@ -809,8 +834,9 @@ async def cmd_score(msg: Message):
         return
     
     # Build leaderboard message
-    text = "🏆 <b>iQ Lost Leaderboard</b> 🏆\n\n"
-    text += "<blockquote expandable>\n"
+    text = "🏆 <b>Quiz Champions Leaderboard</b>\n\n"
+    text += "👑 <b>Top 20 Players:</b>\n"
+    text += "━━━━━━━━━━━━━━━━━━━━\n\n"
     
     medals = ["🥇", "🥈", "🥉"]
     
@@ -831,10 +857,13 @@ async def cmd_score(msg: Message):
         else:
             rank = f"{i}."
         
-        text += f"{rank} {user_mention} - W: {correct} | L: {wrong} | T: {total} | A: {accuracy}%\n\n"
+        text += f"{rank} {user_mention}\n"
+        text += f"   ✅ Correct: {correct} | ❌ Wrong: {wrong}\n"
+        text += f"   📊 Total: {total} | 🎯 Accuracy: {accuracy}%\n\n"
     
-    text += "</blockquote>\n"
-    text += f"🎗️ Only top 20 shown! Total players: {len(leaderboard)}"
+    text += "━━━━━━━━━━━━━━━━━━━━\n"
+    text += "🎮 <b>Keep playing to climb the ranks!</b>\n"
+    text += f"📈 Total players: {len(leaderboard)}"
     
     response = await msg.reply(text, disable_web_page_preview=True)
     logger.info(f"🏆 Leaderboard sent with {len(leaderboard)} players, ID: {response.message_id}")
