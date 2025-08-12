@@ -3,11 +3,15 @@ import logging
 import os
 import random
 import time
+import tracemalloc
 from html import unescape
 from typing import Set
 import asyncpg
 import json
 from datetime import datetime
+
+# Enable tracemalloc for better debugging
+tracemalloc.start()
 
 import aiohttp
 from dotenv import load_dotenv
@@ -1710,6 +1714,9 @@ async def on_startup():
     
     logger.info(f"📊 Loaded {len(user_ids)} users and {len(group_ids)} groups from database")
     
+    # Small delay to ensure everything is ready
+    await asyncio.sleep(1)
+    
     logger.info("🎉 Startup sequence completed - bot is ready!")
 
 async def on_shutdown():
@@ -1755,6 +1762,10 @@ if __name__ == "__main__":
     threading.Thread(target=start_dummy_server, daemon=True).start()
 
     logger.info("🎯 Quiz Bot main execution started")
+    
+    # Enable better asyncio debugging
+    asyncio.get_event_loop().set_debug(True)
+    
     try:
         loop = asyncio.get_running_loop()
         logger.info(f"🐍 Python event loop: {loop}")
@@ -1782,6 +1793,13 @@ if __name__ == "__main__":
             try:
                 await auto_quiz_task
             except asyncio.CancelledError:
+                logger.info("🛑 Auto-quiz loop cancelled")
                 pass
 
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("🛑 Bot stopped by user")
+    except Exception as e:
+        logger.error(f"❌ Fatal error: {e}")
+        logger.exception("Full traceback:")
