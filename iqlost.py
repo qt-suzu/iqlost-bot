@@ -852,14 +852,15 @@ async def cmd_score(msg: Message):
         
         # Get medal or rank number
         if i <= 3:
-            rank = medals[i-1]
+            rank_icon = medals[i-1]
+            text += f"{rank_icon} <b>{user_mention}</b>\n"
         else:
-            rank = f"{i}."
+            text += f"{i}. <b>{user_mention}</b>\n"
         
-        text += f"{rank} {user_mention} - W: {correct} | L: {wrong} | T: {total} | A: {accuracy}%\n\n"
+        text += f"╰─ W: {correct} | L: {wrong} | T: {total} | A: {accuracy}%\n\n"
     
-    text += "</blockquote>\n"
-    text += f"🎗️ Only top 20 shown! Total players: {len(leaderboard)}"
+    text += "</blockquote>\n\n"
+    text += f"🎗️ <b>Only top 20 shown! Total players: {len(leaderboard)}</b>"
     
     response = await msg.reply(text, disable_web_page_preview=True)
     logger.info(f"🏆 Leaderboard sent with {len(leaderboard)} players, ID: {response.message_id}")
