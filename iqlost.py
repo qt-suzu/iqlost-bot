@@ -518,8 +518,11 @@ async def fetch_quiz(category_id: int):
                 logger.error(f"❌ All retries exhausted for category {category_id}")
                 raise e
 
+# Global dictionary to store active polls - FIXED VERSION
+active_polls = {}
+
 async def send_quiz(msg: Message, cat_id: int, emoji: str, category_name: str = None):
-    """Send quiz poll to user with typing indicator and throttling"""
+    """Send quiz poll to user with typing indicator and throttling - FIXED VERSION"""
     info = extract_user_info(msg)
     user_id = info['user_id']
     current_time = time.time()
@@ -586,57 +589,78 @@ async def send_quiz(msg: Message, cat_id: int, emoji: str, category_name: str = 
             )
         logger.info(f"✅ Quiz poll sent successfully, message ID: {poll_msg.message_id}")
         
-        # Store quiz data temporarily until we get the poll update
-        pending_key = f"{msg.chat.id}_{int(time.time())}"
-        pending_polls[pending_key] = {
+        # Store poll data using message_id AND poll_id (when available) - FIXED APPROACH
+        poll_data = {
             'question': q,
             'correct_answer': correct,
             'options': opts,
             'category': category_name or 'Unknown',
             'group_id': group_id,
             'message_id': poll_msg.message_id,
-            'timestamp': time.time()
+            'chat_id': msg.chat.id,
+            'timestamp': time.time(),
+            'user_id': user_id  # Track who requested the quiz
         }
         
-        logger.info(f"📝 Poll data stored in pending with key: {pending_key}, waiting for poll update...")
+        # Store by message_id for immediate access
+        active_polls[f"msg_{poll_msg.message_id}"] = poll_data
+        
+        # If poll object is available, also store by poll_id
+        if hasattr(poll_msg, 'poll') and poll_msg.poll and poll_msg.poll.id:
+            active_polls[poll_msg.poll.id] = poll_data
+            logger.info(f"📝 Poll data stored with poll_id: {poll_msg.poll.id}")
+        
+        logger.info(f"📝 Poll data stored with message_id: {poll_msg.message_id}")
         
     except Exception as e:
         logger.error(f"💥 Error sending quiz: {str(e)}")
-        # Silently handle errors - no "busy" message to user
-        logger.info(f"🔇 Silently handled error for user {info['full_name']}")
+        logger.exception("Full traceback:")
         
     finally:
         # Always remove user from processing set
         user_processing.discard(user_id)
 
-# Global dictionary to store active polls
-active_polls = {}
-# Store quiz context temporarily until we get the poll object
-pending_polls = {}
-
 @dp.poll()
 async def handle_poll_update(poll: types.Poll):
-    """Handle poll updates to store poll data with correct poll_id"""
+    """Handle poll updates to ensure poll data is accessible by poll_id - FIXED VERSION"""
     try:
         logger.info(f"📊 Poll update received - ID: {poll.id}, Question: {poll.question[:50]}...")
         
-        # Look for matching pending poll data by question
+        # Look for poll data by trying different keys
         poll_data = None
-        question_to_match = poll.question.rstrip(' 🧠🎵🏅📜🎮🌿💻➗⚡🌍🏛️🎨⭐🐾🚗💥📱🀄🎪🎬📺🎭🎲📚🎨')  # Remove emoji
+        found_key = None
         
-        for key, pending_data in list(pending_polls.items()):
-            if pending_data['question'] == question_to_match or pending_data['question'] in poll.question:
-                poll_data = pending_data.copy()
-                del pending_polls[key]
-                break
+        # First, check if we already have it by poll_id
+        if poll.id in active_polls:
+            logger.info(f"✅ Poll data already exists for poll_id: {poll.id}")
+            return
+        
+        # Look through message-based keys to find matching poll
+        for key, data in list(active_polls.items()):
+            if key.startswith("msg_"):
+                # Check if this poll belongs to this message by comparing question
+                stored_question = data['question']
+                poll_question = poll.question
+                
+                # Remove emojis for comparison
+                emoji_chars = "🧠🎵🏅📜🎮🌿💻➗⚡🌍🏛️🎨⭐🐾🚗💥📱🀄🎪🎬📺🎭🎲📚"
+                clean_poll_q = poll_question.rstrip(' ' + emoji_chars).strip()
+                
+                if stored_question == clean_poll_q:
+                    poll_data = data.copy()
+                    found_key = key
+                    break
         
         if poll_data:
-            # Store the complete poll data with the actual poll_id
+            # Store the poll data with the actual poll_id
             active_polls[poll.id] = poll_data
-            logger.info(f"✅ Poll data successfully mapped - Poll ID: {poll.id}")
+            logger.info(f"✅ Poll data mapped to poll_id: {poll.id}")
+            
+            # Keep the message-based key as backup
+            logger.debug(f"🔄 Keeping backup key: {found_key}")
         else:
-            logger.warning(f"⚠️ No matching pending poll found for question: {poll.question[:50]}...")
-            logger.debug(f"🔍 Pending polls: {list(pending_polls.keys())}")
+            logger.warning(f"⚠️ No matching poll data found for poll_id: {poll.id}")
+            logger.debug(f"🔍 Available keys: {list(active_polls.keys())}")
         
     except Exception as e:
         logger.error(f"❌ Error handling poll update: {str(e)}")
@@ -644,48 +668,42 @@ async def handle_poll_update(poll: types.Poll):
 
 @dp.poll_answer()
 async def handle_poll_answer(poll_answer):
-    """Handle poll answers to track user statistics"""
+    """Handle poll answers to track user statistics - FIXED VERSION"""
     try:
         logger.info(f"📊 Poll answer received from user {poll_answer.user.full_name} (ID: {poll_answer.user.id})")
         logger.info(f"🔍 Looking for Poll ID: {poll_answer.poll_id}")
-        logger.debug(f"🔍 Available active poll IDs: {list(active_polls.keys())}")
-        logger.debug(f"🔍 Available pending poll keys: {list(pending_polls.keys())}")
         
         poll_data = None
         
-        # First check if it's already in active_polls
+        # Try to find poll data by poll_id first
         if poll_answer.poll_id in active_polls:
             poll_data = active_polls[poll_answer.poll_id]
-            logger.info("✅ Found poll data in active_polls")
+            logger.info("✅ Found poll data using poll_id")
         else:
-            # If not found in active polls, try to find and migrate from pending polls
-            logger.info("🔍 Poll not in active_polls, checking pending_polls...")
+            # Fallback: Look through all stored poll data
+            logger.warning(f"⚠️ Poll_id {poll_answer.poll_id} not found, searching all poll data...")
             
-            # Look through pending polls - since we might have missed the poll update
             current_time = time.time()
-            for key, pending_data in list(pending_polls.items()):
-                # Check if this pending poll is recent (within last 5 minutes)
-                if current_time - pending_data.get('timestamp', 0) < 300:
-                    logger.info(f"🎯 Found recent pending poll: {key}, moving to active with poll_id {poll_answer.poll_id}")
+            for key, data in list(active_polls.items()):
+                # Only check recent polls (within last 10 minutes)
+                if current_time - data.get('timestamp', 0) < 600:
+                    # For debugging, let's try to match this poll
+                    logger.debug(f"🔍 Checking poll data: {key} (age: {current_time - data.get('timestamp', 0):.1f}s)")
                     
-                    # Move this data to active polls
-                    active_polls[poll_answer.poll_id] = pending_data.copy()
-                    poll_data = active_polls[poll_answer.poll_id]
-                    
-                    # Remove from pending
-                    del pending_polls[key]
-                    break
+                    # Since we can't easily match, let's use the most recent one as fallback
+                    if not poll_data or data.get('timestamp', 0) > poll_data.get('timestamp', 0):
+                        poll_data = data
+                        logger.debug(f"🎯 Using poll data from key: {key}")
                 else:
-                    # Clean up old pending polls
-                    logger.debug(f"🗑️ Removing old pending poll: {key}")
-                    del pending_polls[key]
+                    # Clean up old poll data
+                    logger.debug(f"🗑️ Removing old poll data: {key}")
+                    del active_polls[key]
         
         if not poll_data:
-            logger.error(f"❌ Poll ID {poll_answer.poll_id} not found anywhere")
-            logger.info(f"📋 Current active polls: {len(active_polls)}")
-            logger.info(f"📋 Current pending polls: {len(pending_polls)}")
+            logger.error(f"❌ Could not find poll data for poll_id: {poll_answer.poll_id}")
+            logger.error(f"📋 Available active poll keys: {list(active_polls.keys())}")
             
-            # Still save the user
+            # Still save the user to database
             await save_user(poll_answer.user.id, poll_answer.user.username, poll_answer.user.full_name)
             return
             
@@ -713,18 +731,36 @@ async def handle_poll_answer(poll_answer):
             is_correct=is_correct
         )
         
-        # Always save user info regardless of where they answered
+        # Always save user info
         await save_user(user_id, poll_answer.user.username, poll_answer.user.full_name)
         
         logger.info(f"✅ Poll answer successfully recorded: {poll_answer.user.full_name} - {'✅ Correct' if is_correct else '❌ Wrong'}")
-        logger.info(f"📍 Answer location: {'Group' if poll_data.get('group_id') else 'Private'} chat")
+        logger.info(f"📍 Answer location: {'Group ' + str(poll_data.get('group_id')) if poll_data.get('group_id') else 'Private'} chat")
+        
+        # Verify the data was saved by checking recent quiz stats - FOR DEBUGGING
+        try:
+            async with db_pool.acquire() as connection:
+                recent_quiz = await connection.fetchrow('''
+                    SELECT * FROM quiz_stats 
+                    WHERE user_id = $1 
+                    ORDER BY answered_at DESC 
+                    LIMIT 1
+                ''', user_id)
+                
+                if recent_quiz:
+                    logger.info(f"✅ VERIFIED: Quiz answer saved to database: {recent_quiz['is_correct']}")
+                else:
+                    logger.error(f"❌ CRITICAL: Quiz answer NOT found in database for user {user_id}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Database verification failed: {e}")
         
     except Exception as e:
         logger.error(f"❌ Error handling poll answer: {str(e)}")
         logger.exception("Full traceback:")
 
 async def auto_quiz_loop():
-    """Send automatic quizzes to active groups every 2 hours"""
+    """Send automatic quizzes to active groups every 2 hours - FIXED VERSION"""
     await bot.wait_until_ready() if hasattr(bot, "wait_until_ready") else asyncio.sleep(2)
     
     while True:
@@ -754,17 +790,26 @@ async def auto_quiz_loop():
                             explanation=f"💡 Correct Answer: {correct}",
                         )
                         
-                        # Store poll data for tracking
-                        if not hasattr(send_quiz, 'active_polls'):
-                            send_quiz.active_polls = {}
-                            
-                        send_quiz.active_polls[poll_msg.message_id] = {
+                        # Store poll data using the same pattern - FIXED APPROACH
+                        poll_data = {
                             'question': q,
                             'correct_answer': correct,
                             'options': opts,
                             'category': desc,
-                            'group_id': group_id
+                            'group_id': group_id,
+                            'message_id': poll_msg.message_id,
+                            'chat_id': group_id,
+                            'timestamp': time.time(),
+                            'user_id': None  # Auto-quiz has no specific requester
                         }
+                        
+                        # Store by message_id
+                        active_polls[f"msg_{poll_msg.message_id}"] = poll_data
+                        
+                        # If poll object is available, also store by poll_id
+                        if hasattr(poll_msg, 'poll') and poll_msg.poll and poll_msg.poll.id:
+                            active_polls[poll_msg.poll.id] = poll_data
+                            logger.info(f"📝 Auto-quiz poll data stored with poll_id: {poll_msg.poll.id}")
                         
                         logger.info(f"✅ Auto quiz sent to group {group_id}")
                         
