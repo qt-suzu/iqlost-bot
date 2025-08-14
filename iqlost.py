@@ -11,15 +11,16 @@ from html import unescape
 from datetime import datetime
 from typing import Set, Dict, Any
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.types import (
-    BotCommand,
-    Message,
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
+	BotCommand,
+	Message,
+	Update,
+	InlineKeyboardButton,
+	InlineKeyboardMarkup
 )
 from aiogram.client.default import DefaultBotProperties
 
